@@ -21,6 +21,7 @@ fi
 
 /usr/bin/shasum -a 256 -c "$CHECKSUM"
 SHA256="$(/usr/bin/awk '{print $1}' "$CHECKSUM")"
+FILE_SIZE="$(/usr/bin/stat -f '%z' "$DMG")"
 DOWNLOAD_URL="${RELEASE_BASE_URL%/}/TartR-$VERSION-macos.dmg"
 
 /bin/rm -f "$MANIFEST"
@@ -31,6 +32,7 @@ DOWNLOAD_URL="${RELEASE_BASE_URL%/}/TartR-$VERSION-macos.dmg"
 /usr/bin/plutil -insert downloadURL -string "$DOWNLOAD_URL" "$MANIFEST"
 /usr/bin/plutil -insert releaseNotesURL -string "$RELEASE_NOTES_URL" "$MANIFEST"
 /usr/bin/plutil -insert sha256 -string "$SHA256" "$MANIFEST"
+/usr/bin/plutil -insert fileSize -integer "$FILE_SIZE" "$MANIFEST"
 /usr/bin/plutil -convert json -r "$MANIFEST"
 /usr/bin/plutil -convert json -o /dev/null "$MANIFEST"
 

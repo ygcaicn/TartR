@@ -84,6 +84,16 @@ private final class LimitedHTTPDataLoader: NSObject, URLSessionDataDelegate, @un
     }
   }
 
+  func urlSession(
+    _ session: URLSession,
+    task: URLSessionTask,
+    willPerformHTTPRedirection response: HTTPURLResponse,
+    newRequest request: URLRequest,
+    completionHandler: @escaping (URLRequest?) -> Void
+  ) {
+    completionHandler(SecureURLValidation.isSecureHTTPS(request.url) ? request : nil)
+  }
+
   func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
     guard data.count <= maximumBytes - receivedData.count else {
       limitError = CocoaError(.fileReadTooLarge)
@@ -102,6 +112,186 @@ private final class LimitedHTTPDataLoader: NSObject, URLSessionDataDelegate, @un
     session.finishTasksAndInvalidate()
     completion(limitError == nil ? receivedData : nil, receivedResponse, limitError ?? error)
   }
+}
+
+private enum SecureUpdateDownloadError: LocalizedError {
+  case invalidResponse
+  case insecureRedirect
+  case sizeLimitExceeded
+  case verificationFailed
+  case cannotStore(String)
+
+  var errorDescription: String? {
+    switch self {
+    case .invalidResponse: return "更新服务器返回了无效的下载响应。"
+    case .insecureRedirect: return "更新下载被重定向到不安全的地址。"
+    case .sizeLimitExceeded: return "更新包大小与 manifest 不符或超过 512 MB 安全上限。"
+    case .verificationFailed: return "更新包的文件大小或 SHA-256 校验失败，文件未保存。"
+    case .cannotStore(let detail): return "无法保存已验证的更新包：\(detail)"
+    }
+  }
+}
+
+private final class SecureUpdateDownloader: NSObject, URLSessionDownloadDelegate,
+  @unchecked Sendable
+{
+  private let expectedSize: UInt64
+  private let expectedSHA256: String
+  private let destinationURL: URL
+  private let progress: (UInt64, UInt64) -> Void
+  private let completion: (Result<URL, Error>) -> Void
+  private var session: URLSession?
+  private var task: URLSessionDownloadTask?
+  private var pendingError: Error?
+  private var completed = false
+
+  init(
+    expectedSize: UInt64,
+    expectedSHA256: String,
+    destinationURL: URL,
+    progress: @escaping (UInt64, UInt64) -> Void,
+    completion: @escaping (Result<URL, Error>) -> Void
+  ) {
+    self.expectedSize = expectedSize
+    self.expectedSHA256 = expectedSHA256
+    self.destinationURL = destinationURL
+    self.progress = progress
+    self.completion = completion
+  }
+
+  func start(request: URLRequest) {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.timeoutIntervalForRequest = 30
+    configuration.timeoutIntervalForResource = 30 * 60
+    configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+    configuration.httpCookieStorage = nil
+    let queue = OperationQueue()
+    queue.maxConcurrentOperationCount = 1
+    let session = URLSession(configuration: configuration, delegate: self, delegateQueue: queue)
+    self.session = session
+    let task = session.downloadTask(with: request)
+    self.task = task
+    task.resume()
+  }
+
+  func cancel() {
+    task?.cancel()
+  }
+
+  func urlSession(
+    _ session: URLSession,
+    task: URLSessionTask,
+    willPerformHTTPRedirection response: HTTPURLResponse,
+    newRequest request: URLRequest,
+    completionHandler: @escaping (URLRequest?) -> Void
+  ) {
+    guard SecureURLValidation.isSecureHTTPS(request.url) else {
+      pendingError = SecureUpdateDownloadError.insecureRedirect
+      completionHandler(nil)
+      return
+    }
+    completionHandler(request)
+  }
+
+  func urlSession(
+    _ session: URLSession,
+    downloadTask: URLSessionDownloadTask,
+    didWriteData bytesWritten: Int64,
+    totalBytesWritten: Int64,
+    totalBytesExpectedToWrite: Int64
+  ) {
+    guard validateResponse(downloadTask), totalBytesWritten >= 0 else {
+      downloadTask.cancel()
+      return
+    }
+    let received = UInt64(totalBytesWritten)
+    guard received <= expectedSize,
+      received <= UpdateManifestValidation.maximumPackageBytes
+    else {
+      pendingError = SecureUpdateDownloadError.sizeLimitExceeded
+      downloadTask.cancel()
+      return
+    }
+    let total = expectedSize
+    DispatchQueue.main.async { [progress] in progress(received, total) }
+  }
+
+  func urlSession(
+    _ session: URLSession,
+    downloadTask: URLSessionDownloadTask,
+    didFinishDownloadingTo location: URL
+  ) {
+    guard validateResponse(downloadTask) else { return }
+    guard
+      UpdatePackageVerification.verify(
+        fileURL: location,
+        expectedSize: expectedSize,
+        expectedSHA256: expectedSHA256) == .valid(size: expectedSize)
+    else {
+      pendingError = SecureUpdateDownloadError.verificationFailed
+      return
+    }
+
+    let fileManager = FileManager.default
+    let stagingURL = destinationURL.deletingLastPathComponent()
+      .appendingPathComponent(".\(destinationURL.lastPathComponent).\(UUID().uuidString).download")
+    do {
+      try fileManager.copyItem(at: location, to: stagingURL)
+      try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: stagingURL.path)
+      guard
+        UpdatePackageVerification.verify(
+          fileURL: stagingURL,
+          expectedSize: expectedSize,
+          expectedSHA256: expectedSHA256) == .valid(size: expectedSize)
+      else {
+        try? fileManager.removeItem(at: stagingURL)
+        pendingError = SecureUpdateDownloadError.verificationFailed
+        return
+      }
+      if fileManager.fileExists(atPath: destinationURL.path) {
+        _ = try fileManager.replaceItemAt(destinationURL, withItemAt: stagingURL)
+      } else {
+        try fileManager.moveItem(at: stagingURL, to: destinationURL)
+      }
+      finish(.success(destinationURL))
+    } catch {
+      try? fileManager.removeItem(at: stagingURL)
+      pendingError = SecureUpdateDownloadError.cannotStore(error.localizedDescription)
+    }
+  }
+
+  func urlSession(
+    _ session: URLSession,
+    task: URLSessionTask,
+    didCompleteWithError error: Error?
+  ) {
+    guard !completed else { return }
+    finish(.failure(pendingError ?? error ?? SecureUpdateDownloadError.invalidResponse))
+  }
+
+  private func validateResponse(_ task: URLSessionTask) -> Bool {
+    guard pendingError == nil,
+      let response = task.response as? HTTPURLResponse,
+      response.statusCode == 200,
+      SecureURLValidation.isSecureHTTPS(response.url),
+      response.expectedContentLength < 0
+        || UInt64(response.expectedContentLength) == expectedSize
+    else {
+      if pendingError == nil { pendingError = SecureUpdateDownloadError.invalidResponse }
+      return false
+    }
+    return true
+  }
+
+  private func finish(_ result: Result<URL, Error>) {
+    guard !completed else { return }
+    completed = true
+    task = nil
+    session?.finishTasksAndInvalidate()
+    session = nil
+    DispatchQueue.main.async { [completion] in completion(result) }
+  }
+
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
@@ -148,6 +338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   private var isQuitting = false
   private var configurationRecoveryNotice: String?
   private var updateLoader: LimitedHTTPDataLoader?
+  private var updateDownloader: SecureUpdateDownloader?
 
   private lazy var logsDirectory: URL = {
     let url = FileManager.default.homeDirectoryForCurrentUser
@@ -206,6 +397,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     isQuitting = true
     NSWorkspace.shared.notificationCenter.removeObserver(self)
     updateLoader?.cancel()
+    updateDownloader?.cancel()
   }
 
   func applicationDidBecomeActive(_ notification: Notification) {
@@ -325,11 +517,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     case #selector(refreshNow):
       return !syncInProgress && !isQuitting
     case #selector(chooseTartExecutable):
-      return operationProcess == nil && !syncInProgress
+      return operationProcess == nil && updateDownloader == nil && !syncInProgress
     case #selector(resetTartExecutable):
-      return configuredTartExecutablePath != nil && operationProcess == nil && !syncInProgress
+      return configuredTartExecutablePath != nil && operationProcess == nil
+        && updateDownloader == nil && !syncInProgress
     case #selector(checkForUpdates):
-      return updateLoader == nil
+      return updateLoader == nil && updateDownloader == nil
     case #selector(toggleAutomaticUpdateChecks):
       return configuredUpdateManifestURL != nil
     default:
@@ -568,7 +761,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   private func performUpdateCheck(manual: Bool) {
-    guard updateLoader == nil else { return }
+    guard updateLoader == nil, updateDownloader == nil else { return }
     guard let manifestURL = configuredUpdateManifestURL else {
       if manual {
         showAlert(
@@ -607,6 +800,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     guard error == nil,
       let httpResponse = response as? HTTPURLResponse,
       httpResponse.statusCode == 200,
+      SecureURLValidation.isSecureHTTPS(httpResponse.url),
       let data, data.count <= 1_024 * 1_024,
       let manifest = try? JSONDecoder().decode(UpdateManifest.self, from: data),
       let validated = UpdateManifestValidation.validate(manifest)
@@ -645,14 +839,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     showWindow()
     let alert = NSAlert()
     alert.messageText = "TartR \(manifest.version) 可以下载"
+    let sizeDescription =
+      validated.fileSize.map {
+        ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file)
+      } ?? "manifest 未提供"
     alert.informativeText =
-      "当前版本：\(currentVersionString)\n下载通过浏览器完成。DMG SHA-256：\n\(validated.sha256)"
-    alert.addButton(withTitle: "下载 DMG")
+      "当前版本：\(currentVersionString)\nDMG 大小：\(sizeDescription)\nSHA-256：\n\(validated.sha256)"
+    alert.addButton(withTitle: validated.fileSize == nil ? "用浏览器下载" : "安全下载 DMG")
     alert.addButton(withTitle: "查看发布说明")
     alert.addButton(withTitle: "稍后")
     switch alert.runModal() {
     case .alertFirstButtonReturn:
-      NSWorkspace.shared.open(validated.downloadURL)
+      if let expectedSize = validated.fileSize {
+        beginSecureUpdateDownload(
+          manifest: validated, expectedSize: expectedSize, version: manifest.version)
+      } else {
+        NSWorkspace.shared.open(validated.downloadURL)
+      }
     case .alertSecondButtonReturn:
       NSWorkspace.shared.open(validated.releaseNotesURL)
     default:
@@ -660,8 +863,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     }
   }
 
+  private func beginSecureUpdateDownload(
+    manifest: ValidatedUpdateManifest, expectedSize: UInt64, version: String
+  ) {
+    guard updateDownloader == nil, operationProcess == nil else {
+      showAlert(title: "已有操作正在进行", message: "请等待当前操作完成或先取消。")
+      return
+    }
+    let panel = NSSavePanel()
+    panel.title = "下载并验证 TartR 更新"
+    panel.message = "下载完成后必须同时通过文件大小和 SHA-256 校验，TartR 才会保存 DMG。"
+    panel.prompt = "下载"
+    panel.allowedContentTypes = [.diskImage]
+    panel.canCreateDirectories = true
+    panel.nameFieldStringValue = manifest.downloadURL.lastPathComponent
+    if let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+    {
+      panel.directoryURL = downloads
+    }
+    guard panel.runModal() == .OK, let destinationURL = panel.url else { return }
+    guard
+      confirmStorageCapacity(
+        operation: "下载 TartR \(version) 更新",
+        operationBytes: expectedSize,
+        at: destinationURL.deletingLastPathComponent(),
+        offersCacheCleanup: false)
+    else { return }
+
+    var request = URLRequest(url: manifest.downloadURL)
+    request.setValue(
+      "application/x-apple-diskimage, application/octet-stream", forHTTPHeaderField: "Accept")
+    request.setValue("TartR/\(currentAppVersionString)", forHTTPHeaderField: "User-Agent")
+    var downloader: SecureUpdateDownloader!
+    downloader = SecureUpdateDownloader(
+      expectedSize: expectedSize,
+      expectedSHA256: manifest.sha256,
+      destinationURL: destinationURL,
+      progress: { [weak self] received, total in
+        guard let self else { return }
+        let percent = total == 0 ? 0 : min(100, Int(received * 100 / total))
+        self.operationLabel?.stringValue =
+          "正在安全下载 TartR \(version)… \(percent)%（\(self.storageByteString(received)) / \(self.storageByteString(total))）"
+      },
+      completion: { [weak self, weak downloader] result in
+        guard let self, let downloader, self.updateDownloader === downloader else { return }
+        self.updateDownloader = nil
+        self.hideOperation()
+        guard !self.isQuitting else { return }
+        switch result {
+        case .success(let url):
+          self.presentVerifiedUpdate(at: url, version: version)
+        case .failure(let error):
+          if (error as? URLError)?.code != .cancelled {
+            self.showAlert(title: "更新下载失败", message: error.localizedDescription)
+          }
+        }
+        self.refreshUI()
+      })
+    updateDownloader = downloader
+    showOperation("正在安全下载 TartR \(version)…")
+    downloader.start(request: request)
+  }
+
+  private func presentVerifiedUpdate(at url: URL, version: String) {
+    showWindow()
+    let alert = NSAlert()
+    alert.messageText = "TartR \(version) 已安全下载"
+    alert.informativeText = "DMG 的文件大小和 SHA-256 均已验证。TartR 不会自动安装或执行更新。"
+    alert.addButton(withTitle: "打开 DMG")
+    alert.addButton(withTitle: "在 Finder 中显示")
+    alert.addButton(withTitle: "关闭")
+    switch alert.runModal() {
+    case .alertFirstButtonReturn:
+      NSWorkspace.shared.open(url)
+    case .alertSecondButtonReturn:
+      NSWorkspace.shared.activateFileViewerSelecting([url])
+    default:
+      break
+    }
+  }
+
   @objc private func chooseTartExecutable() {
-    guard operationProcess == nil, !syncInProgress else {
+    guard operationProcess == nil, updateDownloader == nil, !syncInProgress else {
       showAlert(title: "请稍后再选择 Tart", message: "等待当前 Tart 操作或状态同步完成后再修改可执行文件。")
       return
     }
@@ -684,7 +967,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   @objc private func resetTartExecutable() {
-    guard operationProcess == nil, !syncInProgress else {
+    guard operationProcess == nil, updateDownloader == nil, !syncInProgress else {
       showAlert(title: "请稍后再恢复自动检测", message: "等待当前 Tart 操作或状态同步完成后再修改可执行文件。")
       return
     }
@@ -746,6 +1029,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   @objc private func cancelOperation() {
+    if let updateDownloader {
+      operationLabel?.stringValue = "正在取消更新下载…"
+      cancelOperationButton?.isEnabled = false
+      updateDownloader.cancel()
+      return
+    }
     guard let process = operationProcess else { return }
     operationWasCancelled = true
     operationLabel?.stringValue = "正在取消操作…"
@@ -1395,7 +1684,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   @objc private func importSettings() {
-    guard operationProcess == nil, !runtimes.values.contains(where: { $0.process.isRunning }) else {
+    guard operationProcess == nil, updateDownloader == nil,
+      !runtimes.values.contains(where: { $0.process.isRunning })
+    else {
       showAlert(title: "暂时无法导入设置", message: "请先等待任务结束并停止所有由 TartR 启动的虚拟机。")
       return
     }
@@ -1776,7 +2067,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     showsFailureAlert: Bool = true,
     completion: @escaping (Bool, String) -> Void
   ) {
-    guard operationProcess == nil else {
+    guard operationProcess == nil, updateDownloader == nil else {
       showAlert(title: "已有操作正在进行", message: "请等待当前 Tart 操作完成或先取消。")
       return
     }
@@ -2022,6 +2313,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       !path.isEmpty
     else { return nil }
     return path
+  }
+
+  private var currentAppVersionString: String {
+    Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
   }
 
   private var configuredUpdateManifestURL: URL? {
@@ -2332,7 +2627,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   private func refreshControls() {
-    let operationBusy = operationProcess != nil
+    let operationBusy = operationProcess != nil || updateDownloader != nil
     imageButton?.isEnabled = tartInstalled && !operationBusy
     moreButton?.isEnabled = tartInstalled && !operationBusy
     let capabilities = selectionCapabilities

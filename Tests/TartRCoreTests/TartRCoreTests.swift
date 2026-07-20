@@ -38,6 +38,10 @@ final class TartRCoreTests: XCTestCase {
   }
 
   func testAppVersionComparisonAndUpdateManifestValidation() {
+    XCTAssertTrue(SecureURLValidation.isSecureHTTPS(URL(string: "https://example.com/file")))
+    XCTAssertFalse(SecureURLValidation.isSecureHTTPS(URL(string: "http://example.com/file")))
+    XCTAssertFalse(
+      SecureURLValidation.isSecureHTTPS(URL(string: "https://user:secret@example.com/file")))
     XCTAssertLessThan(AppVersion("4.10.0")!, AppVersion("4.11")!)
     XCTAssertEqual(AppVersion("v4.11.0"), AppVersion("4.11"))
     XCTAssertNil(AppVersion("4.11-beta"))
@@ -49,11 +53,13 @@ final class TartRCoreTests: XCTestCase {
       minimumSystemVersion: "13.0",
       downloadURL: "https://example.com/TartR-4.11.0-macos.dmg",
       releaseNotesURL: "https://example.com/releases/v4.11.0",
-      sha256: String(repeating: "a", count: 64))
+      sha256: String(repeating: "a", count: 64),
+      fileSize: 1_234_567)
     let validated = UpdateManifestValidation.validate(manifest)
     XCTAssertEqual(validated?.version, AppVersion("4.11.0"))
     XCTAssertEqual(validated?.minimumSystemVersion, AppVersion("13"))
     XCTAssertEqual(validated?.sha256, String(repeating: "a", count: 64))
+    XCTAssertEqual(validated?.fileSize, 1_234_567)
 
     XCTAssertNil(
       UpdateManifestValidation.validate(
@@ -64,6 +70,41 @@ final class TartRCoreTests: XCTestCase {
           downloadURL: "http://example.com/TartR.dmg",
           releaseNotesURL: "https://user:password@example.com/release",
           sha256: "bad")))
+    XCTAssertNil(
+      UpdateManifestValidation.validate(
+        UpdateManifest(
+          schemaVersion: 1,
+          version: "4.11.0",
+          minimumSystemVersion: "13.0",
+          downloadURL: "https://example.com/TartR.dmg",
+          releaseNotesURL: "https://example.com/release",
+          sha256: String(repeating: "a", count: 64),
+          fileSize: UpdateManifestValidation.maximumPackageBytes + 1)))
+  }
+
+  func testUpdatePackageVerificationStreamsAndValidatesPackage() throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("tartr-update-verify-\(UUID().uuidString).dmg")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try Data("hello".utf8).write(to: url)
+    let expectedHash = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
+    XCTAssertEqual(
+      UpdatePackageVerification.verify(
+        fileURL: url, expectedSize: 5, expectedSHA256: expectedHash),
+      .valid(size: 5))
+    XCTAssertEqual(
+      UpdatePackageVerification.verify(
+        fileURL: url, expectedSize: 6, expectedSHA256: expectedHash),
+      .sizeMismatch(expected: 6, actual: 5))
+    XCTAssertEqual(
+      UpdatePackageVerification.verify(
+        fileURL: url, expectedSize: 5, expectedSHA256: String(repeating: "0", count: 64)),
+      .checksumMismatch(actual: expectedHash))
+    XCTAssertEqual(
+      UpdatePackageVerification.verify(
+        fileURL: url, expectedSize: 4, expectedSHA256: expectedHash, maximumBytes: 4),
+      .tooLarge(actual: 5, maximum: 4))
   }
 
   func testStorageCapacityPreflightKeepsReserveAndHandlesUnknownCapacity() {

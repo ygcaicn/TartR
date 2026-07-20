@@ -37,6 +37,7 @@ public struct UpdateManifest: Codable, Equatable, Sendable {
   public let downloadURL: String
   public let releaseNotesURL: String
   public let sha256: String
+  public let fileSize: UInt64?
 
   public init(
     schemaVersion: Int,
@@ -44,7 +45,8 @@ public struct UpdateManifest: Codable, Equatable, Sendable {
     minimumSystemVersion: String,
     downloadURL: String,
     releaseNotesURL: String,
-    sha256: String
+    sha256: String,
+    fileSize: UInt64? = nil
   ) {
     self.schemaVersion = schemaVersion
     self.version = version
@@ -52,6 +54,7 @@ public struct UpdateManifest: Codable, Equatable, Sendable {
     self.downloadURL = downloadURL
     self.releaseNotesURL = releaseNotesURL
     self.sha256 = sha256
+    self.fileSize = fileSize
   }
 }
 
@@ -61,33 +64,28 @@ public struct ValidatedUpdateManifest: Equatable, Sendable {
   public let downloadURL: URL
   public let releaseNotesURL: URL
   public let sha256: String
+  public let fileSize: UInt64?
 }
 
 public enum UpdateManifestValidation {
+  public static let maximumPackageBytes: UInt64 = 512 * 1_024 * 1_024
+
   public static func validate(_ manifest: UpdateManifest) -> ValidatedUpdateManifest? {
     guard manifest.schemaVersion == 1,
       let version = AppVersion(manifest.version),
       let minimumSystemVersion = AppVersion(manifest.minimumSystemVersion),
-      let downloadURL = secureURL(manifest.downloadURL),
-      let releaseNotesURL = secureURL(manifest.releaseNotesURL),
+      let downloadURL = SecureURLValidation.parseSecureHTTPS(manifest.downloadURL),
+      let releaseNotesURL = SecureURLValidation.parseSecureHTTPS(manifest.releaseNotesURL),
       downloadURL.pathExtension.lowercased() == "dmg",
-      manifest.sha256.range(of: #"^[0-9a-fA-F]{64}$"#, options: .regularExpression) != nil
+      manifest.sha256.range(of: #"^[0-9a-fA-F]{64}$"#, options: .regularExpression) != nil,
+      manifest.fileSize.map({ (1...maximumPackageBytes).contains($0) }) ?? true
     else { return nil }
     return ValidatedUpdateManifest(
       version: version,
       minimumSystemVersion: minimumSystemVersion,
       downloadURL: downloadURL,
       releaseNotesURL: releaseNotesURL,
-      sha256: manifest.sha256.lowercased())
-  }
-
-  private static func secureURL(_ value: String) -> URL? {
-    guard let components = URLComponents(string: value),
-      components.scheme?.lowercased() == "https",
-      components.host?.isEmpty == false,
-      components.user == nil,
-      components.password == nil
-    else { return nil }
-    return components.url
+      sha256: manifest.sha256.lowercased(),
+      fileSize: manifest.fileSize)
   }
 }

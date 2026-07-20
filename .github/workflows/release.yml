@@ -60,6 +60,9 @@ jobs:
           UPDATE_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/latest/download/TartR-update.json
         run: make build
 
+      - name: Smoke test packaged app
+        run: make smoke
+
       - name: Configure notarization
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}

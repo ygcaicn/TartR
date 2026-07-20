@@ -1,6 +1,7 @@
 #!/bin/zsh
 zmodload zsh/system
-state_dir=/tmp/tartr-fake-state
+state_dir="${FAKE_TART_STATE_DIR:-/tmp/tartr-fake-state}"
+log_file="${FAKE_TART_LOG:-/tmp/tart-runner-worker-app-test.log}"
 mkdir -p "$state_dir"
 
 is_running() {
@@ -12,9 +13,11 @@ is_running() {
 
 case "$1" in
   --version)
+    print -r -- 'version' >> "$log_file"
     print '2.32.1-ui-test'
     ;;
   list)
+    print -r -- 'list' >> "$log_file"
     local first=true
     print -n '['
     for name in ${=FAKE_TART_VMS:-gitea-runner-worker}; do
@@ -30,18 +33,20 @@ case "$1" in
     ;;
   run)
     name="${@[-1]}"
+    print -r -- "run-invoked: $name" >> "$log_file"
     if is_running "$name"; then
       print -u2 "virtual machine $name is already running"
       exit 1
     fi
     print -r -- "$sysparams[pid]" > "$state_dir/$name.pid"
-    print -r -- "args: $*" >> /tmp/tart-runner-worker-app-test.log
-    trap '/bin/rm -f "$state_dir/$name.pid"; print -r -- "terminated: $name" >> /tmp/tart-runner-worker-app-test.log; exit 0' TERM INT
-    print -r -- "started: $name" >> /tmp/tart-runner-worker-app-test.log
+    print -r -- "args: $*" >> "$log_file"
+    trap '/bin/rm -f "$state_dir/$name.pid"; print -r -- "terminated: $name" >> "$log_file"; exit 0' TERM INT
+    print -r -- "started: $name" >> "$log_file"
     while true; do sleep 0.2; done
     ;;
   stop)
     name="$2"
+    print -r -- "stop-invoked: $name" >> "$log_file"
     if is_running "$name"; then
       vm_pid=$(<"$state_dir/$name.pid")
       kill -TERM "$vm_pid"

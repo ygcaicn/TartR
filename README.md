@@ -73,6 +73,7 @@ TartR 会在状态摘要中显示宿主卷可用空间。下载镜像、从 IPSW
 make test
 make compat # 需要已安装 Tart，用于验证当前 CLI 参数兼容性
 make build
+make smoke  # 启动打包 App，用隔离的假 Tart 验证状态同步和重复打开
 make verify
 ```
 
@@ -81,6 +82,8 @@ make verify
 - `TartRCore`：Tart 数据模型、命令构造、状态解析、镜像目录和路径定位
 - `TartR`：AppKit 应用、进程生命周期、状态轮询和 UI
 - `TartRCoreTests`：无需真实 VM 的核心单元测试
+
+`make smoke` 不接触真实 Tart VM 或用户偏好。它在临时 HOME 中启动打包后的 App，验证已停止的自动启动 VM 只启动一次、外部已运行 VM 不会被重复启动，并确认再次打开 App 只激活现有实例和重新同步状态。
 
 `make build` 会生成以下可发布工件；App 始终封装在 ZIP 和 DMG 中，避免工作区文件提供器写入 FinderInfo 后影响代码签名：
 

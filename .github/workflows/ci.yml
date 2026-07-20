@@ -28,6 +28,8 @@ jobs:
         run: make compat
       - name: Build universal release
         run: make build
+      - name: Smoke test packaged app
+        run: make smoke
       - name: Generate update manifest
         env:
           RELEASE_BASE_URL: https://example.invalid/releases/download/development

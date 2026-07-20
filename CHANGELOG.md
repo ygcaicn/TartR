@@ -2,6 +2,21 @@
 
 All notable changes to TartR are documented here.
 
+## 4.14.0 - 2026-07-20
+
+### Added
+
+- 新增打包 App 自动化冒烟测试，从发布 ZIP 解包并验证签名后真实启动 AppKit 应用
+- 冒烟测试同时覆盖外部已运行和已停止的自动启动 VM，确认只启动后者且两台 VM 都不会重复执行 `tart run`
+- 再次打开相同 App 时验证进程 PID 不变且立即再次同步状态，覆盖单实例重开路径
+- CI 和 Release 在构建后、公证前自动运行 `make smoke`，打包层或 App 启动回归会阻止发布
+
+### Fixed
+
+- 冒烟测试使用独立 HOME、CFPreferences、假 Tart 状态和日志目录，不读取或修改用户真实配置
+- 假 Tart fixture 不再共享固定 `/tmp` 状态，连续或并行测试之间不会互相污染
+- ZIP 发布校验迁移到系统临时目录并主动清除扩展属性，避免文件提供器写入 FinderInfo 导致签名验证竞态
+
 ## 4.13.0 - 2026-07-20
 
 ### Added

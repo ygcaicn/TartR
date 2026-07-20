@@ -4,13 +4,16 @@ set -euo pipefail
 ROOT="${0:A:h:h}"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT/Resources/Info.plist")"
 ZIP="$ROOT/outputs/TartR-$VERSION-macos.zip"
-VERIFY_DIR="$ROOT/.build/verify-release"
+VERIFY_DIR="${TMPDIR:-/tmp}/tartr-release-verify-$$"
 APP="$VERIFY_DIR/TartR.app"
 EXPECTED_BUNDLE_ID="com.caiyagang.tartr"
+
+trap '/bin/rm -rf "$VERIFY_DIR"' EXIT
 
 /bin/rm -rf "$VERIFY_DIR"
 /bin/mkdir -p "$VERIFY_DIR"
 /usr/bin/ditto -x -k "$ZIP" "$VERIFY_DIR"
+/usr/bin/xattr -cr "$APP"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP"
 /usr/bin/plutil -lint "$APP/Contents/Info.plist"
 /usr/bin/lipo "$APP/Contents/MacOS/TartR" -verify_arch arm64 x86_64

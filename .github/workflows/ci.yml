@@ -25,5 +25,5 @@ jobs:
         with:
           name: TartR-development-release
           path: |
-            outputs/TartR-4.0-macos.zip
-            outputs/TartR-4.0-macos.zip.sha256
+            outputs/TartR-4.0.0-macos.zip
+            outputs/TartR-4.0.0-macos.zip.sha256

@@ -5,10 +5,12 @@ ROOT="${0:A:h:h}"
 OUTPUT="$ROOT/outputs"
 BUILD="$ROOT/.build/release-app"
 APP="$OUTPUT/TartR.app"
-ZIP="$OUTPUT/TartR-4.0-macos.zip"
+ZIP="$OUTPUT/TartR-4.0.0-macos.zip"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 
-rm -rf "$APP" "$BUILD" "$ZIP" "$ZIP.sha256"
+rm -rf \
+  "$APP" "$BUILD" "$ZIP" "$ZIP.sha256" \
+  "$OUTPUT/TartR-4.0-macos.zip" "$OUTPUT/TartR-4.0-macos.zip.sha256"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$BUILD/AppIcon.iconset" "$OUTPUT"
 
 build_arch() {

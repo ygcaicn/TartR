@@ -29,7 +29,7 @@ brew install cirruslabs/cli/tart
 
 ## 安装 TartR
 
-从 Releases 下载 `TartR-4.0-macos.zip`，解压后将 `TartR.app` 拖入 `/Applications`。
+从 Releases 下载 `TartR-4.0.0-macos.zip`，解压后将 `TartR.app` 拖入 `/Applications`。
 
 本地开发构建使用 ad-hoc 签名。面向其他用户分发时，请使用 Developer ID 签名并完成 Apple 公证，参见下方“发布”章节。
 
@@ -60,8 +60,8 @@ make verify
 `make build` 会生成：
 
 - `outputs/TartR.app`
-- `outputs/TartR-4.0-macos.zip`
-- `outputs/TartR-4.0-macos.zip.sha256`
+- `outputs/TartR-4.0.0-macos.zip`
+- `outputs/TartR-4.0.0-macos.zip.sha256`
 
 ## 发布
 
@@ -99,4 +99,3 @@ NOTARY_PROFILE=TartR-notary make notarize
 ## 许可证
 
 [MIT](LICENSE)
-

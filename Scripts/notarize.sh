@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="${0:A:h:h}"
 APP="$ROOT/outputs/TartR.app"
-ZIP="$ROOT/outputs/TartR-4.0-macos.zip"
+ZIP="$ROOT/outputs/TartR-4.0.0-macos.zip"
 PROFILE="${NOTARY_PROFILE:-TartR-notary}"
 
 if [[ ! -d "$APP" ]]; then

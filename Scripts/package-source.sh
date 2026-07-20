@@ -2,10 +2,13 @@
 set -euo pipefail
 
 ROOT="${0:A:h:h}"
-VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT/Resources/Info.plist")"
+REF="${1:-HEAD}"
+VERSION="$(
+  /usr/bin/git -C "$ROOT" show "$REF:Resources/Info.plist" \
+    | /usr/bin/plutil -extract CFBundleShortVersionString raw -o - -
+)"
 OUTPUT="$ROOT/outputs"
 ARCHIVE="$OUTPUT/TartR-$VERSION-source.zip"
-REF="${1:-HEAD}"
 
 /bin/mkdir -p "$OUTPUT"
 for old_archive in "$OUTPUT"/TartR-*-source.zip(N) "$OUTPUT"/TartR-*-source.zip.sha256(N); do

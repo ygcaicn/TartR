@@ -2,6 +2,15 @@
 
 All notable changes to TartR are documented here.
 
+## 4.12.1 - 2026-07-20
+
+### Fixed
+
+- 本地与 CI 构建只把 ZIP、DMG 和源码包作为发布工件，避免文件提供器向裸 `.app` 写入 FinderInfo 后破坏严格签名校验
+- DMG 和公证流程统一从已校验的 ZIP 解包到系统临时目录，并在使用前清除扩展属性、重新验证 App 签名
+- 不再让公证或 DMG 打包依赖工作区中的裸 App，云盘同步不会污染正式归档
+- 源码包版本改为从指定 Git ref 内的 plist 派生，避免未提交版本号造成文件名与归档内容不一致
+
 ## 4.12.0 - 2026-07-20
 
 ### Added

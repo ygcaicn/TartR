@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT="${0:A:h:h}"
 OUTPUT="$ROOT/outputs"
 BUILD="$ROOT/.build/release-app"
-APP="$OUTPUT/TartR.app"
 STAGING_ROOT="${TMPDIR:-/tmp}/tartr-app-build-$$"
 STAGED_APP="$STAGING_ROOT/TartR.app"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT/Resources/Info.plist")"
@@ -23,7 +22,7 @@ for old_archive in "$OUTPUT"/TartR-*-macos.zip(N) "$OUTPUT"/TartR-*-macos.zip.sh
   rm -f "$old_archive"
 done
 rm -f "$OUTPUT/TartR-update.json"
-rm -rf "$APP" "$BUILD" "$STAGING_ROOT"
+rm -rf "$OUTPUT/TartR.app" "$BUILD" "$STAGING_ROOT"
 mkdir -p \
   "$STAGED_APP/Contents/MacOS" \
   "$STAGED_APP/Contents/Resources" \
@@ -65,7 +64,5 @@ fi
 
 /usr/bin/ditto -c -k --keepParent --norsrc "$STAGED_APP" "$ZIP"
 /usr/bin/shasum -a 256 "$ZIP" > "$ZIP.sha256"
-/usr/bin/ditto --norsrc "$STAGED_APP" "$APP"
 
-echo "$APP"
 echo "$ZIP"

@@ -82,9 +82,8 @@ make verify
 - `TartR`：AppKit 应用、进程生命周期、状态轮询和 UI
 - `TartRCoreTests`：无需真实 VM 的核心单元测试
 
-`make build` 会生成：
+`make build` 会生成以下可发布工件；App 始终封装在 ZIP 和 DMG 中，避免工作区文件提供器写入 FinderInfo 后影响代码签名：
 
-- `outputs/TartR.app`
 - `outputs/TartR-<版本>-macos.zip`
 - `outputs/TartR-<版本>-macos.zip.sha256`
 - `outputs/TartR-<版本>-macos.dmg`

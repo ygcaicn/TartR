@@ -140,22 +140,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    syncTimer?.invalidate()
-    var runningProcesses = runtimes.values.map(\.process).filter(\.isRunning)
-    if let operationProcess, operationProcess.isRunning {
-      runningProcesses.append(operationProcess)
-    }
-    if let syncProcess, syncProcess.isRunning {
-      runningProcesses.append(syncProcess)
-    }
-    guard !runningProcesses.isEmpty else { return .terminateNow }
     guard !isQuitting else { return .terminateLater }
-    isQuitting = true
+    let managedRuntimes = runtimes.values.filter { $0.process.isRunning }
+    let backgroundProcesses = [operationProcess, syncProcess].compactMap { process in
+      process?.isRunning == true ? process : nil
+    }
+    guard !managedRuntimes.isEmpty || !backgroundProcesses.isEmpty else {
+      syncTimer?.invalidate()
+      return .terminateNow
+    }
 
-    for (id, runtime) in runtimes where runtime.process.isRunning {
-      runtime.expectedStop = true
-      states[id] = .stopping
-      kill(runtime.process.processIdentifier, SIGINT)
+    var keepVMsRunning = false
+    if !managedRuntimes.isEmpty {
+      showWindow()
+      let alert = NSAlert()
+      alert.alertStyle = .warning
+      alert.messageText = "仍有 \(managedRuntimes.count) 台虚拟机由 TartR 启动"
+      alert.informativeText =
+        "可以让虚拟机继续在后台运行；稍后重新打开 TartR 会自动同步并继续管理。"
+        + (backgroundProcesses.isEmpty ? "" : " 当前正在执行的其他 Tart 操作将被取消。")
+      alert.addButton(withTitle: "保持 VM 运行并退出")
+      alert.addButton(withTitle: "停止 VM 并退出")
+      alert.addButton(withTitle: "取消")
+      switch alert.runModal() {
+      case .alertFirstButtonReturn:
+        keepVMsRunning = true
+      case .alertSecondButtonReturn:
+        break
+      default:
+        return .terminateCancel
+      }
+    } else {
+      showWindow()
+      let alert = NSAlert()
+      alert.alertStyle = .warning
+      alert.messageText = "Tart 操作尚未完成"
+      alert.informativeText = "现在退出会取消正在执行的操作。"
+      alert.addButton(withTitle: "取消操作并退出")
+      alert.addButton(withTitle: "继续等待")
+      guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+    }
+
+    syncTimer?.invalidate()
+    isQuitting = true
+    var processesToTerminate = backgroundProcesses
+
+    if keepVMsRunning {
+      appendApplicationLog("TartR 退出，保留 \(managedRuntimes.count) 台由 TartR 启动的虚拟机继续运行。")
+      for runtime in managedRuntimes {
+        ProcessDetachment.detach(runtime.process, closing: [runtime.logHandle])
+      }
+      runtimes.removeAll()
+    } else {
+      processesToTerminate.append(contentsOf: managedRuntimes.map(\.process))
+      for (id, runtime) in runtimes where runtime.process.isRunning {
+        runtime.expectedStop = true
+        states[id] = .stopping
+        kill(runtime.process.processIdentifier, SIGINT)
+      }
     }
     if let operationProcess, operationProcess.isRunning {
       operationWasCancelled = true
@@ -164,12 +206,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     syncProcess?.interrupt()
     refreshUI()
 
+    guard !processesToTerminate.isEmpty else { return .terminateNow }
+    let terminationProcesses = processesToTerminate
     DispatchQueue.global(qos: .userInitiated).async {
       let deadline = Date().addingTimeInterval(8)
-      while runningProcesses.contains(where: \.isRunning) && Date() < deadline {
+      while terminationProcesses.contains(where: \.isRunning) && Date() < deadline {
         Thread.sleep(forTimeInterval: 0.1)
       }
-      for process in runningProcesses where process.isRunning {
+      for process in terminationProcesses where process.isRunning {
         kill(process.processIdentifier, SIGKILL)
         process.waitUntilExit()
       }
@@ -234,6 +278,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         checkboxWithTitle: "", target: self, action: #selector(toggleAutoStart(_:)))
       checkbox.state = configuration.autoStart ? .on : .off
       checkbox.tag = row
+      checkbox.setAccessibilityLabel("打开 TartR 时自动启动 \(configuration.name)")
+      checkbox.setAccessibilityValue(configuration.autoStart)
       checkbox.translatesAutoresizingMaskIntoConstraints = false
       cell.addSubview(checkbox)
       NSLayoutConstraint.activate([
@@ -1053,6 +1099,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   private func startVM(id: UUID, verifyFirst: Bool, suspendable: Bool? = nil) {
+    guard !isQuitting else { return }
     guard let configuration = configurations.first(where: { $0.id == id }) else { return }
     guard runtimes[id]?.process.isRunning != true else { return }
     guard states[id]?.isRunning != true else { return }
@@ -1216,6 +1263,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   private func syncTartState(completion: (() -> Void)? = nil) {
+    guard !isQuitting else { return }
     if let completion { syncCompletions.append(completion) }
     guard !syncInProgress else { return }
     syncInProgress = true
@@ -1381,6 +1429,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             title: "Tart 操作失败",
             message: details.isEmpty ? fallback : String(details.suffix(3000)))
         }
+        guard !self.isQuitting else { return }
         completion(success, output)
         self.syncTartState()
       }
@@ -1867,6 +1916,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     )
     window.title = appTitle
     window.center()
+    window.setFrameAutosaveName("TartRMainWindow")
     window.minSize = NSSize(width: 720, height: 480)
     window.isReleasedWhenClosed = false
     window.delegate = self
@@ -1876,6 +1926,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     searchField = NSSearchField()
     searchField.placeholderString = "搜索虚拟机"
+    searchField.setAccessibilityLabel("搜索虚拟机")
     searchField.sendsSearchStringImmediately = true
     searchField.target = self
     searchField.action = #selector(searchChanged)
@@ -1920,6 +1971,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     nameField = NSTextField()
     nameField.placeholderString = "手动添加虚拟机名称（本地 VM 通常会自动发现）"
+    nameField.setAccessibilityLabel("手动添加虚拟机名称")
     nameField.delegate = self
     nameField.font = NSFont.systemFont(ofSize: 13)
 
@@ -1937,6 +1989,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     tableView.rowHeight = 36
     tableView.usesAlternatingRowBackgroundColors = true
     tableView.allowsEmptySelection = true
+    tableView.setAccessibilityLabel("Tart 虚拟机列表")
+    tableView.autosaveName = "TartRVMTable"
+    tableView.autosaveTableColumns = true
     tableView.doubleAction = #selector(toggleSelectedVM)
     tableView.target = self
 
@@ -2009,7 +2064,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     operationRow.orientation = .horizontal
     operationRow.spacing = 8
 
-    let hint = NSTextField(labelWithString: "状态每 5 秒及窗口激活时与 Tart 同步。退出 TartR 只停止由 TartR 启动的虚拟机。")
+    let hint = NSTextField(
+      labelWithString: "状态每 5 秒及窗口激活时与 Tart 同步。退出时可选择停止 VM 或让它们继续在后台运行。")
     hint.textColor = .tertiaryLabelColor
     hint.font = NSFont.systemFont(ofSize: 11)
 

@@ -1,8 +1,34 @@
+import Darwin
 import XCTest
 
 @testable import TartRCore
 
 final class TartRCoreTests: XCTestCase {
+  func testProcessDetachmentLeavesChildRunning() throws {
+    let logURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("tartr-detach-test-\(UUID().uuidString).log")
+    XCTAssertTrue(FileManager.default.createFile(atPath: logURL.path, contents: Data()))
+    defer { try? FileManager.default.removeItem(at: logURL) }
+
+    func launchDetachedProcess() throws -> pid_t {
+      let handle = try FileHandle(forWritingTo: logURL)
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+      process.arguments = ["5"]
+      process.standardOutput = handle
+      process.standardError = handle
+      try process.run()
+      let pid = process.processIdentifier
+      ProcessDetachment.detach(process, closing: [handle])
+      return pid
+    }
+
+    let pid = try launchDetachedProcess()
+    defer { kill(pid, SIGTERM) }
+    Thread.sleep(forTimeInterval: 0.05)
+    XCTAssertEqual(kill(pid, 0), 0)
+  }
+
   func testOfficialCatalogIsCompleteAndUnique() {
     XCTAssertEqual(officialImageCatalog.count, 18)
     XCTAssertEqual(Set(officialImageCatalog.map(\.source)).count, 18)

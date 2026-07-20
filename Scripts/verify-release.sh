@@ -14,7 +14,8 @@ APP="$VERIFY_DIR/TartR.app"
 /usr/bin/lipo "$APP/Contents/MacOS/TartR" -verify_arch arm64 x86_64
 /usr/bin/shasum -a 256 -c "$ZIP.sha256"
 
-if /usr/bin/codesign -dv --verbose=4 "$APP" 2>&1 | /usr/bin/grep -q 'Signature=adhoc'; then
+SIGNATURE_INFO="$(/usr/bin/codesign -dv --verbose=4 "$APP" 2>&1)"
+if [[ "$SIGNATURE_INFO" == *"Signature=adhoc"* ]]; then
   echo "Verified development release (ad-hoc signed)."
 else
   /usr/sbin/spctl --assess --type execute --verbose=2 "$APP"

@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import Foundation
+import ServiceManagement
 import TartRCore
 import UniformTypeIdentifiers
 
@@ -56,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   private var cancelOperationButton: NSButton!
   private var catalogTargetField: NSTextField?
   private var catalogSourceField: NSTextField?
+  private var launchAtLoginMenuItem: NSMenuItem?
 
   private var configurations: [VMConfiguration] = []
   private var states: [UUID: VMState] = [:]
@@ -122,6 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   func applicationDidBecomeActive(_ notification: Notification) {
+    updateLaunchAtLoginMenuItem()
     syncTartState()
   }
 
@@ -999,6 +1002,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         title: "运行环境",
         text: self.environmentReport(
           tartVersion: success && !value.isEmpty ? value : "无法读取"))
+    }
+  }
+
+  @objc private func toggleLaunchAtLogin() {
+    let service = SMAppService.mainApp
+    do {
+      switch service.status {
+      case .enabled:
+        try service.unregister()
+      case .requiresApproval:
+        SMAppService.openSystemSettingsLoginItems()
+      case .notRegistered, .notFound:
+        try service.register()
+        if service.status == .requiresApproval {
+          showAlert(
+            title: "需要用户批准",
+            message: "请在系统设置的“通用 > 登录项与扩展”中允许 TartR。")
+          SMAppService.openSystemSettingsLoginItems()
+        }
+      @unknown default:
+        showAlert(title: "无法修改登录项", message: "当前 macOS 返回了未知的登录项状态。")
+      }
+    } catch {
+      showAlert(title: "无法修改登录项", message: error.localizedDescription)
+    }
+    updateLaunchAtLoginMenuItem()
+  }
+
+  private func updateLaunchAtLoginMenuItem() {
+    guard let item = launchAtLoginMenuItem else { return }
+    switch SMAppService.mainApp.status {
+    case .enabled:
+      item.state = .on
+      item.title = "登录时启动 TartR"
+    case .requiresApproval:
+      item.state = .mixed
+      item.title = "登录时启动 TartR（需要批准）"
+    case .notRegistered, .notFound:
+      item.state = .off
+      item.title = "登录时启动 TartR"
+    @unknown default:
+      item.state = .off
+      item.title = "登录时启动 TartR"
     }
   }
 
@@ -2010,6 +2056,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     let show = NSMenuItem(title: "显示窗口", action: #selector(showWindow), keyEquivalent: "1")
     show.target = self
     appMenu.addItem(show)
+    let launchAtLogin = NSMenuItem(
+      title: "登录时启动 TartR", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+    launchAtLogin.target = self
+    launchAtLoginMenuItem = launchAtLogin
+    appMenu.addItem(launchAtLogin)
+    updateLaunchAtLoginMenuItem()
     let log = NSMenuItem(title: "打开所选日志", action: #selector(openSelectedLog), keyEquivalent: "l")
     log.target = self
     appMenu.addItem(log)

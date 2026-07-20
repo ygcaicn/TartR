@@ -27,9 +27,9 @@ jobs:
       - name: Verify Tart CLI compatibility
         run: make compat
       - name: Build universal release
-        run: Scripts/build-app.sh
+        run: make build
       - name: Verify release
-        run: Scripts/verify-release.sh
+        run: make verify
       - uses: actions/upload-artifact@v4
         with:
           name: TartR-development-release
@@ -37,3 +37,5 @@ jobs:
           path: |
             outputs/TartR-*-macos.zip
             outputs/TartR-*-macos.zip.sha256
+            outputs/TartR-*-macos.dmg
+            outputs/TartR-*-macos.dmg.sha256

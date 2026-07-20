@@ -76,6 +76,7 @@ jobs:
       - name: Notarize and staple
         env:
           NOTARY_PROFILE: TartR-notary
+          SIGN_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION }}
         run: make notarize
 
       - name: Package source and verify
@@ -90,6 +91,8 @@ jobs:
           files: |
             outputs/TartR-*-macos.zip
             outputs/TartR-*-macos.zip.sha256
+            outputs/TartR-*-macos.dmg
+            outputs/TartR-*-macos.dmg.sha256
             outputs/TartR-*-source.zip
             outputs/TartR-*-source.zip.sha256
 

@@ -1,4 +1,4 @@
-.PHONY: test format check compat build verify source notarize clean
+.PHONY: test format check compat build dmg verify verify-dmg source notarize clean
 
 test:
 	swift test
@@ -15,9 +15,17 @@ compat:
 
 build:
 	Scripts/build-app.sh
+	Scripts/package-dmg.sh
+
+dmg:
+	Scripts/package-dmg.sh
 
 verify:
 	Scripts/verify-release.sh
+	Scripts/verify-dmg.sh
+
+verify-dmg:
+	Scripts/verify-dmg.sh
 
 source:
 	Scripts/package-source.sh

@@ -2,6 +2,20 @@
 
 All notable changes to TartR are documented here.
 
+## 4.6.0 - 2026-07-20
+
+### Added
+
+- 生成带有 Applications 快捷方式的压缩只读 DMG，支持标准拖放安装
+- DMG 具备独立代码签名、SHA-256、磁盘镜像完整性、双架构和内置 App 校验
+- 可从 TartR 菜单启用或关闭 macOS 原生“登录时启动”，需要批准时直达系统设置
+- CI 同时构建、验证并保留 ZIP 与 DMG，Release 同时发布两种安装介质
+
+### Fixed
+
+- DMG 和公证暂存目录移出 Documents/云盘范围，避免 FinderInfo 污染 App 签名
+- 正式发布会分别公证并装订 App 与 DMG，且对外层 DMG 执行 Gatekeeper 评估
+
 ## 4.5.0 - 2026-07-20
 
 ### Added

@@ -25,7 +25,7 @@ jobs:
 
       - name: Verify current Tart CLI compatibility
         run: |
-          brew install cirruslabs/cli/tart
+          Scripts/install-tart-ci.sh
           make compat
 
       - name: Test

@@ -718,7 +718,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   @objc private func copyInstallCommandAndOpenTerminal() {
-    let command = "brew install cirruslabs/cli/tart"
+    let command =
+      "if brew help trust >/dev/null 2>&1; then brew trust --formula cirruslabs/cli/softnet; fi && brew install cirruslabs/cli/tart"
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(command, forType: .string)
     NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"))

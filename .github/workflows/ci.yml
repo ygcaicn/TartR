@@ -23,7 +23,7 @@ jobs:
       - name: Unit tests
         run: swift test
       - name: Install current Tart CLI
-        run: brew install cirruslabs/cli/tart
+        run: Scripts/install-tart-ci.sh
       - name: Verify Tart CLI compatibility
         run: make compat
       - name: Build universal release

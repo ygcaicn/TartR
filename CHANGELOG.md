@@ -2,6 +2,19 @@
 
 All notable changes to TartR are documented here.
 
+## 4.16.1 - 2026-07-20
+
+### Fixed
+
+- Homebrew 6 要求显式信任 Tart 的 `softnet` 依赖；安装引导现在只信任该具体官方 formula 后再安装 Tart
+- CI 和 Release 共用版本化安装脚本，避免 Homebrew tap 信任策略变化导致单元测试通过后构建中断
+- 不使用 `HOMEBREW_NO_REQUIRE_TAP_TRUST`，也不信任整个 Cirrus Labs tap，保持最小供应链授权范围
+
+### Verified
+
+- 从 Homebrew formula 固定 URL 下载 Tart 2.32.1 官方归档并通过发布 SHA-256 校验
+- 使用真实 Tart 2.32.1 二进制完成全部 CLI 帮助兼容检查，包括 `tart exec`
+
 ## 4.16.0 - 2026-07-20
 
 ### Added

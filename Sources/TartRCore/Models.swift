@@ -113,3 +113,19 @@ public enum TartListParser {
     return try decoder.decode([TartVMInfo].self, from: jsonData)
   }
 }
+
+public enum VMExitAssessment {
+  public static func shouldReportFailure(
+    expectedStop: Bool,
+    terminationStatus: Int32,
+    runtimeDuration: TimeInterval,
+    synchronizedState: VMState
+  ) -> Bool {
+    if expectedStop || terminationStatus == 0 { return false }
+    if synchronizedState.isRunning || synchronizedState == .suspended { return false }
+    // A VM that ran for a meaningful amount of time was likely closed by the user,
+    // stopped externally, or shut down from inside the guest.
+    if runtimeDuration >= 5 { return false }
+    return true
+  }
+}

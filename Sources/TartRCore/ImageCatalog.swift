@@ -5,16 +5,21 @@ public struct ImageCatalogItem: Equatable, Sendable {
   public let kind: String
   public let source: String
   public let suggestedName: String
+  public let requiresAppleSilicon: Bool
 
-  public init(os: String, kind: String, source: String, suggestedName: String) {
+  public init(
+    os: String, kind: String, source: String, suggestedName: String,
+    requiresAppleSilicon: Bool
+  ) {
     self.os = os
     self.kind = kind
     self.source = source
     self.suggestedName = suggestedName
+    self.requiresAppleSilicon = requiresAppleSilicon
   }
 }
 
-public let officialImageCatalog: [ImageCatalogItem] = [
+private let macOSImageCatalog: [ImageCatalogItem] = [
   ("macOS 26 Tahoe", "Vanilla", "macos-tahoe-vanilla", "tahoe-vanilla"),
   ("macOS 26 Tahoe", "Base", "macos-tahoe-base", "tahoe-base"),
   ("macOS 26 Tahoe", "Xcode", "macos-tahoe-xcode", "tahoe-xcode"),
@@ -33,5 +38,19 @@ public let officialImageCatalog: [ImageCatalogItem] = [
 ].map {
   ImageCatalogItem(
     os: $0.0, kind: $0.1,
-    source: "ghcr.io/cirruslabs/\($0.2):latest", suggestedName: $0.3)
+    source: "ghcr.io/cirruslabs/\($0.2):latest", suggestedName: $0.3,
+    requiresAppleSilicon: true)
 }
+
+public let officialImageCatalog: [ImageCatalogItem] =
+  macOSImageCatalog + [
+    ImageCatalogItem(
+      os: "Linux", kind: "Ubuntu", source: "ghcr.io/cirruslabs/ubuntu:latest",
+      suggestedName: "ubuntu", requiresAppleSilicon: false),
+    ImageCatalogItem(
+      os: "Linux", kind: "Debian", source: "ghcr.io/cirruslabs/debian:latest",
+      suggestedName: "debian", requiresAppleSilicon: false),
+    ImageCatalogItem(
+      os: "Linux", kind: "Fedora", source: "ghcr.io/cirruslabs/fedora:latest",
+      suggestedName: "fedora", requiresAppleSilicon: false),
+  ]

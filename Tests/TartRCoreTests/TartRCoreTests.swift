@@ -4,8 +4,10 @@ import XCTest
 
 final class TartRCoreTests: XCTestCase {
   func testOfficialCatalogIsCompleteAndUnique() {
-    XCTAssertEqual(officialImageCatalog.count, 15)
-    XCTAssertEqual(Set(officialImageCatalog.map(\.source)).count, 15)
+    XCTAssertEqual(officialImageCatalog.count, 18)
+    XCTAssertEqual(Set(officialImageCatalog.map(\.source)).count, 18)
+    XCTAssertEqual(officialImageCatalog.filter(\.requiresAppleSilicon).count, 15)
+    XCTAssertEqual(officialImageCatalog.filter { !$0.requiresAppleSilicon }.count, 3)
     XCTAssertTrue(officialImageCatalog.allSatisfy { $0.source.hasPrefix("ghcr.io/cirruslabs/") })
     XCTAssertTrue(officialImageCatalog.allSatisfy { $0.source.hasSuffix(":latest") })
   }
@@ -63,5 +65,22 @@ final class TartRCoreTests: XCTestCase {
       isExecutable: { $0 == "/custom/tart" }
     )
     XCTAssertEqual(located?.path, "/custom/tart")
+  }
+
+  func testVMExitAssessmentAvoidsFalseFailureAlerts() {
+    XCTAssertFalse(
+      VMExitAssessment.shouldReportFailure(
+        expectedStop: false, terminationStatus: 1, runtimeDuration: 1, synchronizedState: .running))
+    XCTAssertFalse(
+      VMExitAssessment.shouldReportFailure(
+        expectedStop: false, terminationStatus: 1, runtimeDuration: 1, synchronizedState: .suspended
+      ))
+    XCTAssertFalse(
+      VMExitAssessment.shouldReportFailure(
+        expectedStop: false, terminationStatus: 1, runtimeDuration: 30, synchronizedState: .stopped)
+    )
+    XCTAssertTrue(
+      VMExitAssessment.shouldReportFailure(
+        expectedStop: false, terminationStatus: 1, runtimeDuration: 1, synchronizedState: .stopped))
   }
 }

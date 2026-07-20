@@ -1,4 +1,4 @@
-.PHONY: test format check build verify notarize clean
+.PHONY: test format check build verify source notarize clean
 
 test:
 	swift test
@@ -15,6 +15,9 @@ build:
 
 verify:
 	Scripts/verify-release.sh
+
+source:
+	Scripts/package-source.sh
 
 notarize:
 	Scripts/notarize.sh

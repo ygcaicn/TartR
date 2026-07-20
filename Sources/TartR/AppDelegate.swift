@@ -6,18 +6,29 @@ import TartRCore
 private let appTitle = "TartR"
 private let defaultsKey = "vmConfigurations.v2"
 private let selectedVMKey = "selectedVM.v2"
-private let oldAppID = "local.caiyagang.tart-vm-manager" as CFString
+private let legacyAppIDs = [
+  "local.caiyagang.tartr",
+  "local.caiyagang.tart-vm-manager",
+]
 
-private let imageCatalog = officialImageCatalog
+private let imageCatalog: [ImageCatalogItem] = {
+  #if arch(x86_64)
+    return officialImageCatalog.filter { !$0.requiresAppleSilicon }
+  #else
+    return officialImageCatalog
+  #endif
+}()
 
 private final class VMRuntime {
   let process: Process
   let logHandle: FileHandle
+  let startedAt: Date
   var expectedStop = false
 
-  init(process: Process, logHandle: FileHandle) {
+  init(process: Process, logHandle: FileHandle, startedAt: Date = Date()) {
     self.process = process
     self.logHandle = logHandle
+    self.startedAt = startedAt
   }
 }
 
@@ -315,12 +326,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   @objc private func downloadImage() {
-    #if arch(x86_64)
-      showAlert(
-        title: "需要 Apple Silicon",
-        message: "官方 macOS 镜像只能在 Apple Silicon Mac 上运行。Intel Mac 仍可通过“更多操作”创建和管理 Linux VM。")
-      return
-    #endif
     guard tartInstalled else {
       showAlert(title: "请先安装 Tart", message: "使用上方安装引导完成 Tart 安装后再下载镜像。")
       return
@@ -333,8 +338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     popup.action = #selector(catalogSelectionChanged(_:))
     let target = NSTextField(string: imageCatalog[1].suggestedName)
     let source = NSTextField(string: imageCatalog[1].source)
-    source.isEditable = false
-    source.textColor = .secondaryLabelColor
+    source.isEditable = true
     catalogTargetField = target
     catalogSourceField = source
 
@@ -342,7 +346,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       [
         ("官方镜像", popup),
         ("本地名称", target),
-        ("镜像地址", source),
+        ("镜像地址（可编辑）", source),
       ], width: 470)
     let alert = NSAlert()
     alert.messageText = "下载并克隆官方镜像"
@@ -358,11 +362,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     let item = imageCatalog[max(0, popup.indexOfSelectedItem)]
     let name = target.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    let selectedSource = source.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     catalogTargetField = nil
     catalogSourceField = nil
     guard validNewVMName(name) else { return }
+    guard !selectedSource.isEmpty else {
+      showAlert(title: "镜像地址无效", message: "请输入 OCI 镜像地址或本地源 VM 名称。")
+      return
+    }
     runManagedTartCommand(
-      TartCommand.clone(source: item.source, name: name).arguments,
+      TartCommand.clone(source: selectedSource, name: name).arguments,
       title: "正在下载 \(item.os) · \(item.kind)…"
     ) { [weak self] success, _ in
       if success { self?.syncAndSelect(name: name) }
@@ -721,6 +730,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   private func processDidExit(id: UUID, process: Process) {
     guard let runtime = runtimes[id], runtime.process === process else { return }
     let expected = runtime.expectedStop || isQuitting
+    let runtimeDuration = Date().timeIntervalSince(runtime.startedAt)
     try? runtime.logHandle.synchronize()
     try? runtime.logHandle.close()
     runtimes.removeValue(forKey: id)
@@ -729,8 +739,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     states[id] = expected ? .stopped : .unknown
     refreshUI()
     syncTartState { [weak self] in
-      guard let self, !expected, process.terminationStatus != 0,
-        self.states[id]?.isRunning != true,
+      guard let self,
+        VMExitAssessment.shouldReportFailure(
+          expectedStop: expected,
+          terminationStatus: process.terminationStatus,
+          runtimeDuration: runtimeDuration,
+          synchronizedState: self.states[id] ?? .unknown),
         let configuration = self.configurations.first(where: { $0.id == id })
       else { return }
       let message =
@@ -1054,7 +1068,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       let decoded = try? JSONDecoder().decode([VMConfiguration].self, from: data)
     {
       configurations = decoded
-    } else if let data = CFPreferencesCopyAppValue(defaultsKey as CFString, oldAppID) as? Data,
+    } else if let data = legacyPreferenceData(forKey: defaultsKey),
       let decoded = try? JSONDecoder().decode([VMConfiguration].self, from: data)
     {
       configurations = decoded
@@ -1063,7 +1077,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       configurations = []
       saveConfigurations()
     }
+    if UserDefaults.standard.string(forKey: selectedVMKey) == nil,
+      let legacySelection = legacyPreferenceString(forKey: selectedVMKey)
+    {
+      UserDefaults.standard.set(legacySelection, forKey: selectedVMKey)
+    }
     for configuration in configurations { states[configuration.id] = .unknown }
+  }
+
+  private func legacyPreferenceData(forKey key: String) -> Data? {
+    for appID in legacyAppIDs {
+      if let data = CFPreferencesCopyAppValue(key as CFString, appID as CFString) as? Data {
+        return data
+      }
+    }
+    return nil
+  }
+
+  private func legacyPreferenceString(forKey key: String) -> String? {
+    for appID in legacyAppIDs {
+      if let value = CFPreferencesCopyAppValue(key as CFString, appID as CFString) as? String {
+        return value
+      }
+    }
+    return nil
   }
 
   private func saveConfigurations() {

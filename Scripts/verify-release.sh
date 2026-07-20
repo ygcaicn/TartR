@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT="${0:A:h:h}"
-ZIP="$ROOT/outputs/TartR-4.0.0-macos.zip"
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT/Resources/Info.plist")"
+ZIP="$ROOT/outputs/TartR-$VERSION-macos.zip"
 VERIFY_DIR="$ROOT/.build/verify-release"
 APP="$VERIFY_DIR/TartR.app"
 

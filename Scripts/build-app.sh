@@ -5,12 +5,14 @@ ROOT="${0:A:h:h}"
 OUTPUT="$ROOT/outputs"
 BUILD="$ROOT/.build/release-app"
 APP="$OUTPUT/TartR.app"
-ZIP="$OUTPUT/TartR-4.0.0-macos.zip"
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT/Resources/Info.plist")"
+ZIP="$OUTPUT/TartR-$VERSION-macos.zip"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 
-rm -rf \
-  "$APP" "$BUILD" "$ZIP" "$ZIP.sha256" \
-  "$OUTPUT/TartR-4.0-macos.zip" "$OUTPUT/TartR-4.0-macos.zip.sha256"
+for old_archive in "$OUTPUT"/TartR-*-macos.zip(N) "$OUTPUT"/TartR-*-macos.zip.sha256(N); do
+  rm -f "$old_archive"
+done
+rm -rf "$APP" "$BUILD"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$BUILD/AppIcon.iconset" "$OUTPUT"
 
 build_arch() {

@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT="${0:A:h:h}"
 APP="$ROOT/outputs/TartR.app"
-ZIP="$ROOT/outputs/TartR-4.0.0-macos.zip"
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT/Resources/Info.plist")"
+ZIP="$ROOT/outputs/TartR-$VERSION-macos.zip"
 PROFILE="${NOTARY_PROFILE:-TartR-notary}"
 
 if [[ ! -d "$APP" ]]; then

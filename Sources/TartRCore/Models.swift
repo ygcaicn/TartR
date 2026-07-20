@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public struct TartVMInfo: Codable, Equatable, Sendable {
@@ -77,17 +78,20 @@ public struct VMConfiguration: Codable, Equatable, Sendable {
   public var name: String
   public var autoStart: Bool
   public var runOptions: VMRunOptions
+  public var sshUsername: String
 
   public init(
     id: UUID = UUID(),
     name: String,
     autoStart: Bool = false,
-    runOptions: VMRunOptions = VMRunOptions()
+    runOptions: VMRunOptions = VMRunOptions(),
+    sshUsername: String = SSHConnectionCommand.defaultUsername
   ) {
     self.id = id
     self.name = name
     self.autoStart = autoStart
     self.runOptions = runOptions
+    self.sshUsername = sshUsername
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -95,6 +99,7 @@ public struct VMConfiguration: Codable, Equatable, Sendable {
     case name
     case autoStart
     case runOptions
+    case sshUsername
   }
 
   public init(from decoder: Decoder) throws {
@@ -104,6 +109,9 @@ public struct VMConfiguration: Codable, Equatable, Sendable {
     autoStart = try container.decodeIfPresent(Bool.self, forKey: .autoStart) ?? false
     runOptions =
       try container.decodeIfPresent(VMRunOptions.self, forKey: .runOptions) ?? VMRunOptions()
+    sshUsername =
+      try container.decodeIfPresent(String.self, forKey: .sshUsername)
+      ?? SSHConnectionCommand.defaultUsername
   }
 
   public func encode(to encoder: Encoder) throws {
@@ -112,6 +120,7 @@ public struct VMConfiguration: Codable, Equatable, Sendable {
     try container.encode(name, forKey: .name)
     try container.encode(autoStart, forKey: .autoStart)
     try container.encode(runOptions, forKey: .runOptions)
+    try container.encode(sshUsername, forKey: .sshUsername)
   }
 }
 
@@ -178,6 +187,7 @@ public enum TartRSettingsValidation: Equatable, Sendable {
   case duplicateID
   case duplicateName
   case invalidName
+  case invalidSSHUsername
 
   public static func validate(_ document: TartRSettingsDocument) -> TartRSettingsValidation {
     guard document.schemaVersion == TartRSettingsDocument.currentSchemaVersion else {
@@ -193,8 +203,76 @@ public enum TartRSettingsValidation: Equatable, Sendable {
         return .invalidName
       }
       guard normalizedNames.insert(name.lowercased()).inserted else { return .duplicateName }
+      guard SSHConnectionCommand.isValidUsername(configuration.sshUsername) else {
+        return .invalidSSHUsername
+      }
     }
     return .valid
+  }
+}
+
+public enum SSHConnectionCommand {
+  public static let defaultUsername = "admin"
+
+  public static func isValidUsername(_ username: String) -> Bool {
+    guard (1...64).contains(username.utf8.count),
+      username == username.trimmingCharacters(in: .whitespacesAndNewlines)
+    else { return false }
+    let bytes = Array(username.utf8)
+    guard let first = bytes.first, isASCIILetter(first) || first == 95 else { return false }
+    return bytes.dropFirst().allSatisfy {
+      isASCIILetter($0) || isASCIIDigit($0) || $0 == 95 || $0 == 45 || $0 == 46
+    }
+  }
+
+  public static func make(username: String, host: String) -> String? {
+    guard isValidUsername(username), let normalizedHost = validatedHost(host) else { return nil }
+    if normalizedHost.contains(":") {
+      return "ssh -l \(username) \(normalizedHost)"
+    }
+    return "ssh \(username)@\(normalizedHost)"
+  }
+
+  private static func validatedHost(_ host: String) -> String? {
+    let value = host.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !value.isEmpty, value == host, value.utf8.count <= 253 else { return nil }
+    if value.contains(":") {
+      var address = in6_addr()
+      return value.withCString { inet_pton(AF_INET6, $0, &address) == 1 } ? value : nil
+    }
+    if value.utf8.allSatisfy({ isASCIIDigit($0) || $0 == 46 }) {
+      let components = value.split(separator: ".", omittingEmptySubsequences: false)
+      guard components.count == 4,
+        components.allSatisfy({ part in
+          !part.isEmpty && part.count <= 3 && part.allSatisfy(\.isNumber)
+            && Int(part).map { (0...255).contains($0) } == true
+        })
+      else { return nil }
+      return value
+    }
+    let labels = value.split(separator: ".", omittingEmptySubsequences: false)
+    guard !labels.isEmpty,
+      labels.allSatisfy({ label in
+        guard (1...63).contains(label.utf8.count),
+          let first = label.utf8.first, let last = label.utf8.last,
+          isASCIIAlphaNumeric(first), isASCIIAlphaNumeric(last)
+        else { return false }
+        return label.utf8.allSatisfy { isASCIIAlphaNumeric($0) || $0 == 45 }
+      })
+    else { return nil }
+    return value
+  }
+
+  private static func isASCIILetter(_ byte: UInt8) -> Bool {
+    (65...90).contains(byte) || (97...122).contains(byte)
+  }
+
+  private static func isASCIIDigit(_ byte: UInt8) -> Bool {
+    (48...57).contains(byte)
+  }
+
+  private static func isASCIIAlphaNumeric(_ byte: UInt8) -> Bool {
+    isASCIILetter(byte) || isASCIIDigit(byte)
   }
 }
 

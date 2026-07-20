@@ -319,6 +319,7 @@ final class TartRCoreTests: XCTestCase {
     XCTAssertEqual(decoded.first?.name, "legacy-vm")
     XCTAssertEqual(decoded.first?.autoStart, true)
     XCTAssertEqual(decoded.first?.runOptions, VMRunOptions())
+    XCTAssertEqual(decoded.first?.sshUsername, SSHConnectionCommand.defaultUsername)
   }
 
   func testPartialRunOptionsDecodeWithForwardCompatibleDefaults() throws {
@@ -328,6 +329,36 @@ final class TartRCoreTests: XCTestCase {
       .data(using: .utf8)!
     let decoded = try JSONDecoder().decode([VMConfiguration].self, from: data)
     XCTAssertEqual(decoded.first?.runOptions, VMRunOptions(headless: true))
+  }
+
+  func testSSHConnectionCommandAcceptsSafeTargets() {
+    XCTAssertEqual(
+      SSHConnectionCommand.make(username: "admin", host: "192.0.2.10"),
+      "ssh admin@192.0.2.10")
+    XCTAssertEqual(
+      SSHConnectionCommand.make(username: "ci_runner-1", host: "vm-1.example.test"),
+      "ssh ci_runner-1@vm-1.example.test")
+    XCTAssertEqual(
+      SSHConnectionCommand.make(username: "admin", host: "2001:db8::10"),
+      "ssh -l admin 2001:db8::10")
+  }
+
+  func testSSHConnectionCommandRejectsInjectionAndMalformedTargets() {
+    for username in [
+      "", " admin", "admin user", "admin;id", "$(id)", "`id`", "-oProxyCommand=id",
+      "admin@host", String(repeating: "a", count: 65),
+    ] {
+      XCTAssertFalse(SSHConnectionCommand.isValidUsername(username), username)
+      XCTAssertNil(SSHConnectionCommand.make(username: username, host: "192.0.2.10"), username)
+    }
+
+    for host in [
+      "", " 192.0.2.10", "192.0.2.10;id", "$(id)", "`id`", "-oProxyCommand=id",
+      "example.com -p 22", "999.0.0.1", "1.2.3", "2001:db8::zz", "host..example",
+      "host.example\nrm -rf /",
+    ] {
+      XCTAssertNil(SSHConnectionCommand.make(username: "admin", host: host), host)
+    }
   }
 
   func testVMConfigurationRecoveryFallsBackWithoutLosingBackup() throws {
@@ -388,7 +419,7 @@ final class TartRCoreTests: XCTestCase {
       configurations: [
         VMConfiguration(
           name: "worker", autoStart: true,
-          runOptions: VMRunOptions(headless: true, noClipboard: true))
+          runOptions: VMRunOptions(headless: true, noClipboard: true), sshUsername: "runner")
       ])
     let decoded = try JSONDecoder().decode(
       TartRSettingsDocument.self, from: JSONEncoder().encode(document))
@@ -426,5 +457,11 @@ final class TartRCoreTests: XCTestCase {
         TartRSettingsDocument(
           exportedByVersion: "test", configurations: [VMConfiguration(name: " padded ")])),
       .invalidName)
+    XCTAssertEqual(
+      TartRSettingsValidation.validate(
+        TartRSettingsDocument(
+          exportedByVersion: "test",
+          configurations: [VMConfiguration(name: "worker", sshUsername: "admin;id")])),
+      .invalidSSHUsername)
   }
 }

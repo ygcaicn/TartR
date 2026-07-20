@@ -2,6 +2,20 @@
 
 All notable changes to TartR are documented here.
 
+## 4.12.0 - 2026-07-20
+
+### Added
+
+- 运行中的单台 VM 可一键获取地址、复制 SSH 命令并打开 Terminal，命令仍由用户确认后手动执行
+- 每台 VM 独立记忆 SSH 用户名；旧配置无损迁移并默认使用 `admin`
+- SSH 命令支持严格校验的 IPv4、IPv6 和 DNS 主机名，IPv6 使用 OpenSSH 原生的 `-l` 用户参数形式
+
+### Fixed
+
+- SSH 用户名、Tart 返回地址及导入设置均拒绝空白、选项、命令替换、分号和其他注入字符
+- 多选 VM 时禁用 SSH 单机操作，避免在选择不明确时生成错误连接命令
+- TartR 只向剪贴板写入验证后的 SSH 命令并打开 Terminal，不通过 shell 或 AppleScript 自动执行
+
 ## 4.11.0 - 2026-07-20
 
 ### Added

@@ -866,6 +866,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     #endif
     menu.addItem(.separator())
     addMenuItem("复制 IP 地址", #selector(copySelectedIP), to: menu, enabled: state.isRunning)
+    addMenuItem(
+      "复制 SSH 命令并打开终端…", #selector(copySSHCommandAndOpenTerminal), to: menu,
+      enabled: selectedConfiguration != nil && state.isRunning)
     addMenuItem("挂起虚拟机", #selector(suspendSelectedVM), to: menu, enabled: state.isRunning)
     menu.addItem(.separator())
     addMenuItem("从最新 IPSW 创建 macOS VM…", #selector(createMacVM), to: menu)
@@ -1186,6 +1189,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     }
   }
 
+  @objc private func copySSHCommandAndOpenTerminal() {
+    guard let configuration = selectedConfiguration,
+      let values = promptForValues(
+        title: "连接到 \(configuration.name)",
+        message: "TartR 会记住此 VM 的用户名，复制安全的 SSH 命令并打开终端，但不会自动执行命令。",
+        fields: [("SSH 用户名", configuration.sshUsername, true)])
+    else { return }
+    let username = values[0]
+    guard SSHConnectionCommand.isValidUsername(username) else {
+      showAlert(
+        title: "SSH 用户名无效",
+        message: "请输入 1–64 个 ASCII 字符；以字母或下划线开头，之后仅可使用字母、数字、下划线、连字符或句点。")
+      return
+    }
+    guard let index = configurations.firstIndex(where: { $0.id == configuration.id }) else {
+      return
+    }
+    configurations[index].sshUsername = username
+    saveConfigurations()
+
+    runManagedTartCommand(
+      TartCommand.ip(name: configuration.name, wait: 5).arguments, title: "正在获取 IP 地址…",
+      showsSuccessAlert: false
+    ) { success, output in
+      guard success else { return }
+      let host = output.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard let command = SSHConnectionCommand.make(username: username, host: host) else {
+        self.showAlert(
+          title: "无法生成 SSH 命令",
+          message: "Tart 返回了无法安全识别的地址。请刷新状态后重试。")
+        return
+      }
+      NSPasteboard.general.clearContents()
+      guard NSPasteboard.general.setString(command, forType: .string) else {
+        self.showAlert(title: "无法复制 SSH 命令", message: "系统剪贴板当前不可用，请稍后重试。")
+        return
+      }
+      self.showAlert(
+        title: "SSH 命令已复制",
+        message: "请在终端按 ⌘V 粘贴并回车：\n\n\(command)")
+      guard
+        NSWorkspace.shared.open(
+          URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"))
+      else {
+        self.showAlert(title: "无法打开终端", message: "SSH 命令仍在剪贴板中，可手动打开终端后粘贴。")
+        return
+      }
+    }
+  }
+
   @objc private func suspendSelectedVM() {
     guard let configuration = selectedConfiguration else { return }
     runManagedTartCommand(
@@ -1334,7 +1387,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     let panel = NSSavePanel()
     panel.title = "导出 TartR 设置"
-    panel.message = "设置文件包含 VM 名称和启动选项，但不包含日志或 Registry 凭据。"
+    panel.message = "设置文件包含 VM 名称、启动选项和 SSH 用户名，但不包含日志或 Registry 凭据。"
     panel.allowedContentTypes = [.json]
     panel.canCreateDirectories = true
     panel.nameFieldStringValue = "TartR-Settings.json"
@@ -1376,6 +1429,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       return
     case .invalidName:
       showAlert(title: "设置文件有无效名称", message: "VM 名称不能为空、包含 / 或带有前后空白。")
+      return
+    case .invalidSSHUsername:
+      showAlert(title: "设置文件有无效 SSH 用户名", message: "SSH 用户名包含不安全字符或长度不合法。")
       return
     }
 

@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   private var window: NSWindow!
   private var tableView: NSTableView!
   private var nameField: NSTextField!
+  private var searchField: NSSearchField!
   private var addButton: NSButton!
   private var startButton: NSButton!
   private var stopButton: NSButton!
@@ -64,6 +65,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   private var tartSyncError: String?
   private var tartInstalled = true
   private var operationProcess: Process?
+  private var operationOutputURL: URL?
+  private var operationBaseTitle: String?
+  private var operationProgressTimer: Timer?
+  private var operationWasCancelled = false
+  private var lastTableSignature: String?
   private var isQuitting = false
 
   private lazy var logsDirectory: URL = {
@@ -125,9 +131,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     for (id, runtime) in runtimes where runtime.process.isRunning {
       runtime.expectedStop = true
       states[id] = .stopping
-      runtime.process.terminate()
+      kill(runtime.process.processIdentifier, SIGINT)
     }
-    operationProcess?.terminate()
+    if let operationProcess, operationProcess.isRunning {
+      operationWasCancelled = true
+      operationProcess.interrupt()
+    }
     refreshUI()
 
     DispatchQueue.global(qos: .userInitiated).async {
@@ -150,15 +159,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   func numberOfRows(in tableView: NSTableView) -> Int {
-    configurations.count
+    visibleConfigurations.count
   }
 
   func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView?
   {
-    guard configurations.indices.contains(row), let identifier = tableColumn?.identifier else {
+    let visible = visibleConfigurations
+    guard visible.indices.contains(row), let identifier = tableColumn?.identifier else {
       return nil
     }
-    let configuration = configurations[row]
+    let configuration = visible[row]
 
     switch identifier.rawValue {
     case "name":
@@ -218,6 +228,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     refreshControls()
   }
 
+  func tableView(
+    _ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]
+  ) {
+    refreshUI(forceTableReload: true)
+  }
+
   func controlTextDidChange(_ obj: Notification) {
     addButton.isEnabled = !normalizedInputName.isEmpty
   }
@@ -246,16 +262,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     states[configuration.id] = .unknown
     saveConfigurations()
     nameField.stringValue = ""
+    searchField.stringValue = ""
     tableView.reloadData()
-    tableView.selectRowIndexes(
-      IndexSet(integer: configurations.count - 1), byExtendingSelection: false)
-    tableView.scrollRowToVisible(configurations.count - 1)
+    if let row = visibleConfigurations.firstIndex(where: { $0.id == configuration.id }) {
+      tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+      tableView.scrollRowToVisible(row)
+    }
     refreshUI()
   }
 
   @objc private func deleteSelectedVM() {
-    guard let row = selectedRow, configurations.indices.contains(row) else { return }
-    let configuration = configurations[row]
+    guard let row = selectedRow, let configuration = selectedConfiguration,
+      let configurationIndex = configurations.firstIndex(where: { $0.id == configuration.id })
+    else { return }
     guard !discoveredNames.contains(configuration.name) else {
       showAlert(
         title: "无法移除本地虚拟机", message: "这是 Tart 已创建的本地虚拟机。TartR 只移除手动保存但本地不存在的记录，不会直接删除虚拟机磁盘。")
@@ -266,13 +285,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       return
     }
 
-    configurations.remove(at: row)
+    configurations.remove(at: configurationIndex)
     states.removeValue(forKey: configuration.id)
     saveConfigurations()
     tableView.reloadData()
-    if !configurations.isEmpty {
+    if !visibleConfigurations.isEmpty {
       tableView.selectRowIndexes(
-        IndexSet(integer: min(row, configurations.count - 1)), byExtendingSelection: false)
+        IndexSet(integer: min(row, visibleConfigurations.count - 1)), byExtendingSelection: false)
     }
     refreshUI()
   }
@@ -297,9 +316,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   @objc private func toggleAutoStart(_ sender: NSButton) {
-    guard configurations.indices.contains(sender.tag) else { return }
-    configurations[sender.tag].autoStart = sender.state == .on
+    let visible = visibleConfigurations
+    guard visible.indices.contains(sender.tag),
+      let index = configurations.firstIndex(where: { $0.id == visible[sender.tag].id })
+    else { return }
+    configurations[index].autoStart = sender.state == .on
     saveConfigurations()
+  }
+
+  @objc private func searchChanged() {
+    refreshUI(forceTableReload: true)
   }
 
   @objc private func openSelectedLog() {
@@ -322,7 +348,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   @objc private func cancelOperation() {
-    operationProcess?.terminate()
+    guard let process = operationProcess else { return }
+    operationWasCancelled = true
+    operationLabel?.stringValue = "正在取消操作…"
+    cancelOperationButton?.isEnabled = false
+    process.interrupt()
+    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self, weak process] in
+      guard let self, let process,
+        self.operationProcess === process, process.isRunning
+      else { return }
+      kill(process.processIdentifier, SIGKILL)
+    }
   }
 
   @objc private func downloadImage() {
@@ -349,7 +385,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         ("镜像地址（可编辑）", source),
       ], width: 470)
     let alert = NSAlert()
-    alert.messageText = "下载并克隆官方镜像"
+    alert.messageText = "下载并克隆镜像"
     alert.informativeText = "镜像通常约 25 GB，下载时间取决于网络速度。默认账号和密码均为 admin。"
     alert.accessoryView = accessory
     alert.addButton(withTitle: "开始下载")
@@ -389,6 +425,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     let menu = NSMenu()
     let state = selectedConfiguration.flatMap { states[$0.id] } ?? .unknown
     addMenuItem(
+      "查看详细配置…", #selector(showSelectedDetails), to: menu,
+      enabled: selectedConfiguration != nil)
+    menu.addItem(.separator())
+    addMenuItem(
       "复制虚拟机…", #selector(cloneSelectedVM), to: menu,
       enabled: selectedConfiguration != nil && !state.isRunning)
     addMenuItem(
@@ -396,6 +436,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       enabled: selectedConfiguration != nil && !state.isRunning)
     addMenuItem(
       "调整配置…", #selector(configureSelectedVM), to: menu,
+      enabled: selectedConfiguration != nil && !state.isRunning)
+    addMenuItem(
+      "推送到 OCI Registry…", #selector(pushSelectedVM), to: menu,
       enabled: selectedConfiguration != nil && !state.isRunning)
     addMenuItem(
       "以可挂起模式启动", #selector(startSelectedVMSuspendable), to: menu,
@@ -406,6 +449,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     menu.addItem(.separator())
     addMenuItem("从最新 IPSW 创建 macOS VM…", #selector(createMacVM), to: menu)
     addMenuItem("创建空白 Linux VM…", #selector(createLinuxVM), to: menu)
+    addMenuItem("清理 Tart 下载缓存…", #selector(pruneCaches), to: menu)
     menu.addItem(.separator())
     addMenuItem(
       "删除虚拟机和磁盘…", #selector(deleteVMAndDisk), to: menu,
@@ -431,6 +475,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       title: "正在复制 \(configuration.name)…"
     ) { [weak self] success, _ in
       if success { self?.syncAndSelect(name: newName) }
+    }
+  }
+
+  @objc private func showSelectedDetails() {
+    guard let configuration = selectedConfiguration else { return }
+    runManagedTartCommand(
+      TartCommand.get(name: configuration.name).arguments,
+      title: "正在读取 \(configuration.name) 配置…", showsSuccessAlert: false
+    ) { [weak self] success, output in
+      guard success, let self else { return }
+      var details = output.trimmingCharacters(in: .whitespacesAndNewlines)
+      if let data = details.data(using: .utf8),
+        let object = try? JSONSerialization.jsonObject(with: data),
+        let prettyData = try? JSONSerialization.data(
+          withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
+        let pretty = String(data: prettyData, encoding: .utf8)
+      {
+        details = pretty
+      }
+      self.showAlert(title: configuration.name, message: details)
     }
   }
 
@@ -471,15 +535,81 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       )
     else { return }
 
-    var arguments = ["set", configuration.name]
-    let optionNames = ["--cpu", "--memory", "--display", "--disk-size"]
-    for (index, value) in values.enumerated() where !value.isEmpty {
-      arguments += [optionNames[index], value]
-    }
+    let arguments = TartCommand.set(
+      name: configuration.name,
+      cpu: values[0].isEmpty ? nil : values[0],
+      memory: values[1].isEmpty ? nil : values[1],
+      display: values[2].isEmpty ? nil : values[2],
+      diskSize: values[3].isEmpty ? nil : values[3]
+    ).arguments
     guard arguments.count > 2 else { return }
     runManagedTartCommand(arguments, title: "正在更新虚拟机配置…") { [weak self] success, _ in
       if success { self?.syncTartState() }
     }
+  }
+
+  @objc private func pushSelectedVM() {
+    guard let configuration = selectedConfiguration else { return }
+    guard
+      let values = promptForValues(
+        title: "推送到 OCI Registry",
+        message: "Registry 凭据由 Tart、Docker credential helper 或环境变量管理，TartR 不保存密码。",
+        fields: [
+          ("本地虚拟机", configuration.name, false),
+          ("远程地址", "ghcr.io/组织/镜像:latest", true),
+        ])
+    else { return }
+    let remoteName = values[1].trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !remoteName.isEmpty, remoteName.contains("/") else {
+      showAlert(title: "远程地址无效", message: "请输入完整 OCI 地址，例如 ghcr.io/acme/macos:latest。")
+      return
+    }
+    let confirmation = NSAlert()
+    confirmation.alertStyle = .warning
+    confirmation.messageText = "推送 \(configuration.name)？"
+    confirmation.informativeText = "将向 \(remoteName) 上传虚拟机镜像，可能消耗大量时间和网络流量。"
+    confirmation.addButton(withTitle: "开始推送")
+    confirmation.addButton(withTitle: "取消")
+    guard confirmation.runModal() == .alertFirstButtonReturn else { return }
+    runManagedTartCommand(
+      TartCommand.push(name: configuration.name, remoteName: remoteName).arguments,
+      title: "正在推送 \(configuration.name)…"
+    ) { _, _ in }
+  }
+
+  @objc private func pruneCaches() {
+    guard
+      let values = promptForValues(
+        title: "清理 Tart 下载缓存",
+        message: "仅清理可重新下载的 OCI/IPSW 缓存，不删除本地虚拟机。至少填写一个条件。",
+        fields: [
+          ("早于天数", "30", true),
+          ("缓存上限（GB）", "", true),
+        ])
+    else { return }
+    let olderThan = values[0]
+    let spaceBudget = values[1]
+    guard olderThan.isEmpty || UInt(olderThan) != nil,
+      spaceBudget.isEmpty || UInt(spaceBudget) != nil,
+      !olderThan.isEmpty || !spaceBudget.isEmpty
+    else {
+      showAlert(title: "清理条件无效", message: "请至少填写一个非负整数条件。")
+      return
+    }
+    let confirmation = NSAlert()
+    confirmation.alertStyle = .warning
+    confirmation.messageText = "确认清理 Tart 缓存？"
+    confirmation.informativeText = "被删除的 OCI 镜像层或 IPSW 需要在下次使用时重新下载。"
+    confirmation.addButton(withTitle: "开始清理")
+    confirmation.addButton(withTitle: "取消")
+    guard confirmation.runModal() == .alertFirstButtonReturn else { return }
+    runManagedTartCommand(
+      TartCommand.pruneCaches(
+        olderThan: olderThan.isEmpty ? nil : olderThan,
+        spaceBudget: spaceBudget.isEmpty ? nil : spaceBudget
+      ).arguments,
+      title: "正在清理 Tart 缓存…"
+    ) { _, _ in }
   }
 
   @objc private func copySelectedIP() {
@@ -612,6 +742,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       refreshUI()
       syncTartState { [weak self] in
         guard let self else { return }
+        guard self.tartSyncError == nil else {
+          self.states[id] = .unknown
+          self.refreshUI()
+          return
+        }
         if self.states[id]?.isRunning != true {
           self.startVM(id: id, verifyFirst: false, suspendable: suspendable)
         }
@@ -678,7 +813,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     if let runtime = runtimes[id], runtime.process.isRunning {
       runtime.expectedStop = true
-      runtime.process.terminate()
+      kill(runtime.process.processIdentifier, SIGINT)
       DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 8) {
         [weak process = runtime.process] in
         guard let process, process.isRunning else { return }
@@ -854,7 +989,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     showsSuccessAlert: Bool = true,
     completion: @escaping (Bool, String) -> Void
   ) {
-    guard operationProcess?.isRunning != true else {
+    guard operationProcess == nil else {
       showAlert(title: "已有操作正在进行", message: "请等待当前 Tart 操作完成或先取消。")
       return
     }
@@ -871,76 +1006,118 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     configureTartProcess(process, arguments: arguments)
     process.standardOutput = outputHandle
     process.standardError = outputHandle
+    do {
+      try process.run()
+    } catch {
+      try? outputHandle.close()
+      try? FileManager.default.removeItem(at: outputURL)
+      showAlert(title: "无法运行 Tart", message: error.localizedDescription)
+      completion(false, error.localizedDescription)
+      return
+    }
     operationProcess = process
+    operationOutputURL = outputURL
+    operationWasCancelled = false
     showOperation(title)
 
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      do {
-        try process.run()
-        process.waitUntilExit()
-        try? outputHandle.close()
-        let data = (try? Data(contentsOf: outputURL)) ?? Data()
-        try? FileManager.default.removeItem(at: outputURL)
-        let output = String(data: data, encoding: .utf8) ?? ""
-        DispatchQueue.main.async {
-          guard let self else { return }
-          self.operationProcess = nil
-          self.hideOperation()
-          let success = process.terminationStatus == 0
-          self.appendApplicationLog(
-            "tart \(arguments.joined(separator: " "))\nstatus=\(process.terminationStatus)\n\(output)"
-          )
-          if success {
-            if showsSuccessAlert {
-              self.showAlert(
-                title: "操作完成", message: title.replacingOccurrences(of: "正在", with: "已"))
-            }
-          } else if process.terminationReason != .uncaughtSignal {
-            let details = output.trimmingCharacters(in: .whitespacesAndNewlines)
+      process.waitUntilExit()
+      try? outputHandle.close()
+      let data = (try? Data(contentsOf: outputURL)) ?? Data()
+      try? FileManager.default.removeItem(at: outputURL)
+      let output = String(data: data, encoding: .utf8) ?? ""
+      DispatchQueue.main.async {
+        guard let self else { return }
+        let wasCancelled = self.operationWasCancelled
+        self.operationProcess = nil
+        self.operationWasCancelled = false
+        self.hideOperation()
+        let success = !wasCancelled && process.terminationStatus == 0
+        self.appendApplicationLog(
+          "tart \(arguments.joined(separator: " "))\nstatus=\(process.terminationStatus) cancelled=\(wasCancelled)\n\(output)"
+        )
+        if wasCancelled {
+          // User cancellation is an expected outcome, not a success or failure alert.
+        } else if success {
+          if showsSuccessAlert {
             self.showAlert(
-              title: "Tart 操作失败",
-              message: details.isEmpty
-                ? "退出状态码 \(process.terminationStatus)" : String(details.suffix(3000)))
+              title: "操作完成", message: title.replacingOccurrences(of: "正在", with: "已"))
           }
-          completion(success, output)
-          self.syncTartState()
+        } else if process.terminationReason != .uncaughtSignal {
+          let details = output.trimmingCharacters(in: .whitespacesAndNewlines)
+          self.showAlert(
+            title: "Tart 操作失败",
+            message: details.isEmpty
+              ? "退出状态码 \(process.terminationStatus)" : String(details.suffix(3000)))
         }
-      } catch {
-        try? outputHandle.close()
-        try? FileManager.default.removeItem(at: outputURL)
-        DispatchQueue.main.async {
-          guard let self else { return }
-          self.operationProcess = nil
-          self.hideOperation()
-          self.showAlert(title: "无法运行 Tart", message: error.localizedDescription)
-          completion(false, error.localizedDescription)
-        }
+        completion(success, output)
+        self.syncTartState()
       }
     }
   }
 
   private func showOperation(_ title: String) {
+    operationBaseTitle = title
     operationLabel?.stringValue = title
     operationLabel?.isHidden = false
     operationSpinner?.isHidden = false
     operationSpinner?.startAnimation(nil)
     cancelOperationButton?.isHidden = false
+    cancelOperationButton?.isEnabled = true
     imageButton?.isEnabled = false
     moreButton?.isEnabled = false
+    operationProgressTimer?.invalidate()
+    operationProgressTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) {
+      [weak self] _ in
+      self?.refreshOperationProgress()
+    }
   }
 
   private func hideOperation() {
+    operationProgressTimer?.invalidate()
+    operationProgressTimer = nil
+    operationOutputURL = nil
+    operationBaseTitle = nil
     operationLabel?.isHidden = true
     operationSpinner?.stopAnimation(nil)
     operationSpinner?.isHidden = true
     cancelOperationButton?.isHidden = true
+    cancelOperationButton?.isEnabled = true
     imageButton?.isEnabled = tartInstalled
     moreButton?.isEnabled = true
   }
 
+  private func refreshOperationProgress() {
+    guard let outputURL = operationOutputURL,
+      let baseTitle = operationBaseTitle,
+      let handle = try? FileHandle(forReadingFrom: outputURL)
+    else { return }
+    defer { try? handle.close() }
+
+    let size = (try? handle.seekToEnd()) ?? 0
+    guard size > 0 else { return }
+    let readSize = min(UInt64(4096), size)
+    try? handle.seek(toOffset: size - readSize)
+    guard let data = try? handle.read(upToCount: Int(readSize)),
+      let text = String(data: data, encoding: .utf8)
+    else { return }
+
+    let lines = text.components(separatedBy: CharacterSet.newlines.union(.init(charactersIn: "\r")))
+    guard
+      var lastLine = lines.last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    else { return }
+    if let expression = try? NSRegularExpression(pattern: "\u{001B}\\[[0-9;?]*[ -/]*[@-~]") {
+      lastLine = expression.stringByReplacingMatches(
+        in: lastLine, range: NSRange(lastLine.startIndex..., in: lastLine), withTemplate: "")
+    }
+    operationLabel?.stringValue = "\(baseTitle) · \(String(lastLine.suffix(140)))"
+  }
+
   private func syncAndSelect(name: String) {
     syncTartState { [weak self] in
-      guard let self, let row = self.configurations.firstIndex(where: { $0.name == name }) else {
+      guard let self, let row = self.visibleConfigurations.firstIndex(where: { $0.name == name })
+      else {
         return
       }
       self.tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
@@ -1024,8 +1201,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   private var selectedConfiguration: VMConfiguration? {
-    guard let row = selectedRow, configurations.indices.contains(row) else { return nil }
-    return configurations[row]
+    let visible = visibleConfigurations
+    guard let row = selectedRow, visible.indices.contains(row) else { return nil }
+    return visible[row]
+  }
+
+  private var visibleConfigurations: [VMConfiguration] {
+    let query = searchField?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let descriptor = tableView?.sortDescriptors.first
+    let sortKey = descriptor?.key.flatMap(VMListSortKey.init(rawValue:)) ?? .name
+    return VMListProjection.make(
+      configurations: configurations,
+      states: states,
+      infoByName: infoByName,
+      query: query,
+      sortKey: sortKey,
+      ascending: descriptor?.ascending ?? true)
   }
 
   private func logURL(for configuration: VMConfiguration) -> URL {
@@ -1110,35 +1301,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   private func restoreSelection() {
-    guard !configurations.isEmpty else { return }
+    guard !visibleConfigurations.isEmpty else { return }
     let savedID = UserDefaults.standard.string(forKey: selectedVMKey).flatMap(
       UUID.init(uuidString:))
-    let row = savedID.flatMap { id in configurations.firstIndex(where: { $0.id == id }) } ?? 0
+    let row =
+      savedID.flatMap { id in visibleConfigurations.firstIndex(where: { $0.id == id }) } ?? 0
     tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
   }
 
-  private func refreshUI() {
-    tableView?.reloadData()
+  private func refreshUI(forceTableReload: Bool = false) {
+    let visible = visibleConfigurations
+    let signature = visible.map { configuration in
+      [
+        configuration.id.uuidString,
+        configuration.name,
+        configuration.autoStart.description,
+        states[configuration.id]?.label ?? "",
+        String(infoByName[configuration.name]?.disk ?? -1),
+        String(infoByName[configuration.name]?.size ?? -1),
+      ].joined(separator: "|")
+    }.joined(separator: "\n")
+    if forceTableReload || signature != lastTableSignature {
+      let selectedID = UserDefaults.standard.string(forKey: selectedVMKey).flatMap(
+        UUID.init(uuidString:))
+      tableView?.reloadData()
+      lastTableSignature = signature
+      if let selectedID, let row = visible.firstIndex(where: { $0.id == selectedID }) {
+        tableView?.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+      }
+    }
     refreshControls()
     let runningCount = states.values.filter { state in
       if case .running = state { return true }
       return false
     }.count
     let total = configurations.count
+    let isFiltering =
+      !(searchField?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+      .isEmpty ?? true)
     if let tartSyncError, !tartSyncError.isEmpty {
       summaryLabel?.stringValue = "无法同步 Tart：\(tartSyncError)"
       summaryLabel?.textColor = .systemRed
     } else {
-      summaryLabel?.stringValue =
-        runningCount == 0
-        ? "已发现/保存 \(total) 台虚拟机，没有正在运行的实例。"
-        : "已发现/保存 \(total) 台虚拟机，\(runningCount) 台正在运行。"
+      if isFiltering {
+        summaryLabel?.stringValue = "显示 \(visible.count) / \(total) 台虚拟机，\(runningCount) 台正在运行。"
+      } else {
+        summaryLabel?.stringValue =
+          runningCount == 0
+          ? "已发现/保存 \(total) 台虚拟机，没有正在运行的实例。"
+          : "已发现/保存 \(total) 台虚拟机，\(runningCount) 台正在运行。"
+      }
       summaryLabel?.textColor = .secondaryLabelColor
     }
   }
 
   private func refreshControls() {
-    let operationBusy = operationProcess?.isRunning == true
+    let operationBusy = operationProcess != nil
     imageButton?.isEnabled = tartInstalled && !operationBusy
     moreButton?.isEnabled = tartInstalled && !operationBusy
     guard let selected = selectedConfiguration else {
@@ -1211,8 +1429,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     let heading = NSTextField(labelWithString: "TartR")
     heading.font = NSFont.systemFont(ofSize: 22, weight: .semibold)
 
-    imageButton = makeButton("下载官方镜像…", action: #selector(downloadImage))
-    let headingRow = NSStackView(views: [heading, NSView(), imageButton])
+    searchField = NSSearchField()
+    searchField.placeholderString = "搜索虚拟机"
+    searchField.sendsSearchStringImmediately = true
+    searchField.target = self
+    searchField.action = #selector(searchChanged)
+    searchField.widthAnchor.constraint(equalToConstant: 220).isActive = true
+    imageButton = makeButton("下载/克隆镜像…", action: #selector(downloadImage))
+    let headingRow = NSStackView(views: [heading, NSView(), searchField, imageButton])
     headingRow.orientation = .horizontal
     headingRow.spacing = 10
 
@@ -1274,18 +1498,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     let nameColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
     nameColumn.title = "虚拟机名称"
     nameColumn.minWidth = 230
+    nameColumn.sortDescriptorPrototype = NSSortDescriptor(
+      key: "name", ascending: true, selector: #selector(NSString.localizedStandardCompare(_:)))
     let statusColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("status"))
     statusColumn.title = "状态"
     statusColumn.width = 125
     statusColumn.minWidth = 110
+    statusColumn.sortDescriptorPrototype = NSSortDescriptor(key: "status", ascending: true)
     let diskColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("disk"))
     diskColumn.title = "磁盘"
     diskColumn.width = 80
     diskColumn.minWidth = 70
+    diskColumn.sortDescriptorPrototype = NSSortDescriptor(key: "disk", ascending: true)
     let sizeColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("size"))
     sizeColumn.title = "实际占用"
     sizeColumn.width = 90
     sizeColumn.minWidth = 80
+    sizeColumn.sortDescriptorPrototype = NSSortDescriptor(key: "size", ascending: true)
     let autoColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("autostart"))
     autoColumn.title = "打开 App 时启动"
     autoColumn.width = 125
@@ -1295,6 +1524,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     tableView.addTableColumn(diskColumn)
     tableView.addTableColumn(sizeColumn)
     tableView.addTableColumn(autoColumn)
+    tableView.sortDescriptors = [nameColumn.sortDescriptorPrototype!]
 
     let scrollView = NSScrollView()
     scrollView.documentView = tableView

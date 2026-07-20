@@ -129,3 +129,47 @@ public enum VMExitAssessment {
     return true
   }
 }
+
+public enum VMListSortKey: String, Sendable {
+  case name
+  case status
+  case disk
+  case size
+}
+
+public enum VMListProjection {
+  public static func make(
+    configurations: [VMConfiguration],
+    states: [UUID: VMState],
+    infoByName: [String: TartVMInfo],
+    query: String,
+    sortKey: VMListSortKey,
+    ascending: Bool
+  ) -> [VMConfiguration] {
+    let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    var result = configurations.filter {
+      normalizedQuery.isEmpty || $0.name.localizedCaseInsensitiveContains(normalizedQuery)
+    }
+    result.sort { left, right in
+      let comparison: ComparisonResult
+      switch sortKey {
+      case .status:
+        comparison = (states[left.id]?.label ?? "").localizedStandardCompare(
+          states[right.id]?.label ?? "")
+      case .disk:
+        comparison = NSNumber(value: infoByName[left.name]?.disk ?? -1).compare(
+          NSNumber(value: infoByName[right.name]?.disk ?? -1))
+      case .size:
+        comparison = NSNumber(value: infoByName[left.name]?.size ?? -1).compare(
+          NSNumber(value: infoByName[right.name]?.size ?? -1))
+      case .name:
+        comparison = left.name.localizedStandardCompare(right.name)
+      }
+      if comparison == .orderedSame {
+        return left.name.localizedStandardCompare(right.name) == .orderedAscending
+      }
+      return ascending ? comparison == .orderedAscending : comparison == .orderedDescending
+    }
+    return result
+  }
+}

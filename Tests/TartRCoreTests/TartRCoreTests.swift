@@ -56,6 +56,14 @@ final class TartRCoreTests: XCTestCase {
     XCTAssertEqual(
       TartCommand.clone(source: "ghcr.io/example/image:latest", name: "local").arguments,
       ["clone", "ghcr.io/example/image:latest", "local"])
+    XCTAssertEqual(
+      TartCommand.get(name: "vm").arguments, ["get", "vm", "--format", "json"])
+    XCTAssertEqual(
+      TartCommand.push(name: "vm", remoteName: "ghcr.io/acme/vm:latest").arguments,
+      ["push", "vm", "ghcr.io/acme/vm:latest"])
+    XCTAssertEqual(
+      TartCommand.pruneCaches(olderThan: "30", spaceBudget: "100").arguments,
+      ["prune", "--entries", "caches", "--older-than", "30", "--space-budget", "100"])
   }
 
   func testExecutableLocatorPrefersExplicitOverride() {
@@ -82,5 +90,28 @@ final class TartRCoreTests: XCTestCase {
     XCTAssertTrue(
       VMExitAssessment.shouldReportFailure(
         expectedStop: false, terminationStatus: 1, runtimeDuration: 1, synchronizedState: .stopped))
+  }
+
+  func testVMListProjectionFiltersAndSorts() {
+    let alpha = VMConfiguration(name: "alpha")
+    let beta = VMConfiguration(name: "beta")
+    let infos = [
+      "alpha": TartVMInfo(
+        source: "local", name: "alpha", disk: 50, size: 20, running: false, state: "Stopped"),
+      "beta": TartVMInfo(
+        source: "local", name: "beta", disk: 80, size: 10, running: false, state: "Stopped"),
+    ]
+    XCTAssertEqual(
+      VMListProjection.make(
+        configurations: [beta, alpha], states: [:], infoByName: infos, query: "ALP",
+        sortKey: .name, ascending: true
+      ).map(\.name),
+      ["alpha"])
+    XCTAssertEqual(
+      VMListProjection.make(
+        configurations: [alpha, beta], states: [:], infoByName: infos, query: "",
+        sortKey: .disk, ascending: false
+      ).map(\.name),
+      ["beta", "alpha"])
   }
 }

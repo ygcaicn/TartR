@@ -77,10 +77,12 @@ public enum TartCommand: Equatable, Sendable {
 
 public enum TartExecutableLocator {
   public static func candidatePaths(
+    explicitPath: String? = nil,
     environment: [String: String] = ProcessInfo.processInfo.environment,
     homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
   ) -> [String] {
     var paths: [String] = []
+    if let explicitPath, !explicitPath.isEmpty { paths.append(explicitPath) }
     if let override = environment["TART_EXECUTABLE"], !override.isEmpty { paths.append(override) }
     paths += [
       "/opt/homebrew/bin/tart",
@@ -93,13 +95,16 @@ public enum TartExecutableLocator {
   }
 
   public static func locate(
+    explicitPath: String? = nil,
     environment: [String: String] = ProcessInfo.processInfo.environment,
     homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
     isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
   ) -> URL? {
-    candidatePaths(environment: environment, homeDirectory: homeDirectory)
-      .first(where: isExecutable)
-      .map(URL.init(fileURLWithPath:))
+    candidatePaths(
+      explicitPath: explicitPath, environment: environment, homeDirectory: homeDirectory
+    )
+    .first(where: isExecutable)
+    .map(URL.init(fileURLWithPath:))
   }
 }
 

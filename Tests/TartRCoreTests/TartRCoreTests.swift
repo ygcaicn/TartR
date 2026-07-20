@@ -4,6 +4,16 @@ import XCTest
 @testable import TartRCore
 
 final class TartRCoreTests: XCTestCase {
+  func testTartVersionValidationRejectsUnrelatedExecutables() {
+    XCTAssertTrue(TartVersionValidation.isPlausible("2.32.1"))
+    XCTAssertTrue(TartVersionValidation.isPlausible("tart 2.33.0-beta.1"))
+    XCTAssertTrue(TartVersionValidation.isPlausible("Tart v3.0"))
+    XCTAssertFalse(TartVersionValidation.isPlausible(""))
+    XCTAssertFalse(TartVersionValidation.isPlausible("Python 3.12.1"))
+    XCTAssertFalse(TartVersionValidation.isPlausible("Darwin Kernel Version 25"))
+    XCTAssertFalse(TartVersionValidation.isPlausible(String(repeating: "1", count: 300)))
+  }
+
   func testVMSelectionCapabilitiesResolveMixedBatchSafely() {
     let stopped = VMConfiguration(name: "stopped")
     let suspended = VMConfiguration(name: "suspended")
@@ -172,6 +182,25 @@ final class TartRCoreTests: XCTestCase {
       isExecutable: { $0 == "/custom/tart" }
     )
     XCTAssertEqual(located?.path, "/custom/tart")
+  }
+
+  func testExecutableLocatorPrefersPersistedPathOverEnvironment() {
+    let candidates = TartExecutableLocator.candidatePaths(
+      explicitPath: "/selected/tart",
+      environment: ["TART_EXECUTABLE": "/environment/tart"],
+      homeDirectory: URL(fileURLWithPath: "/home/test"))
+    XCTAssertEqual(
+      candidates,
+      [
+        "/selected/tart", "/environment/tart", "/opt/homebrew/bin/tart", "/usr/local/bin/tart",
+        "/home/test/.local/bin/tart",
+      ])
+    let located = TartExecutableLocator.locate(
+      explicitPath: "/selected/tart",
+      environment: ["TART_EXECUTABLE": "/environment/tart"],
+      homeDirectory: URL(fileURLWithPath: "/home/test"),
+      isExecutable: { ["/selected/tart", "/environment/tart"].contains($0) })
+    XCTAssertEqual(located?.path, "/selected/tart")
   }
 
   func testVMExitAssessmentAvoidsFalseFailureAlerts() {

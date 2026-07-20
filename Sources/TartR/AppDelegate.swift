@@ -10,6 +10,7 @@ private let defaultsKey = "vmConfigurations.v2"
 private let defaultsBackupKey = "vmConfigurations.v2.backup"
 private let defaultsCorruptKey = "vmConfigurations.v2.corruptBackup"
 private let selectedVMKey = "selectedVM.v2"
+private let tartExecutablePathKey = "tartExecutablePath.v1"
 private let legacyAppIDs = [
   "local.caiyagang.tartr",
   "local.caiyagang.tart-vm-manager",
@@ -233,6 +234,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       return selectedConfiguration != nil
     case #selector(refreshNow):
       return !syncInProgress && !isQuitting
+    case #selector(chooseTartExecutable):
+      return operationProcess == nil && !syncInProgress
+    case #selector(resetTartExecutable):
+      return configuredTartExecutablePath != nil && operationProcess == nil && !syncInProgress
     default:
       return true
     }
@@ -435,6 +440,98 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   @objc private func openQuickStart() {
     NSWorkspace.shared.open(URL(string: "https://tart.run/quick-start/")!)
+  }
+
+  @objc private func chooseTartExecutable() {
+    guard operationProcess == nil, !syncInProgress else {
+      showAlert(title: "请稍后再选择 Tart", message: "等待当前 Tart 操作或状态同步完成后再修改可执行文件。")
+      return
+    }
+    let panel = NSOpenPanel()
+    panel.title = "选择 Tart 可执行文件"
+    panel.message = "选择可信来源且具有执行权限的 tart 文件。此路径只保存在本机。"
+    panel.prompt = "使用此 Tart"
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = false
+    if let current = tartExecutableURL {
+      panel.directoryURL = current.deletingLastPathComponent()
+    }
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    guard FileManager.default.isExecutableFile(atPath: url.path) else {
+      showAlert(title: "无法使用所选文件", message: "该文件不存在或没有执行权限。")
+      return
+    }
+    validateAndSaveTartExecutable(url.standardizedFileURL)
+  }
+
+  @objc private func resetTartExecutable() {
+    guard operationProcess == nil, !syncInProgress else {
+      showAlert(title: "请稍后再恢复自动检测", message: "等待当前 Tart 操作或状态同步完成后再修改可执行文件。")
+      return
+    }
+    UserDefaults.standard.removeObject(forKey: tartExecutablePathKey)
+    appendApplicationLog("已恢复自动检测 Tart 可执行文件。")
+    resyncAfterTartExecutableChange()
+  }
+
+  private func validateAndSaveTartExecutable(_ url: URL) {
+    let process = Process()
+    process.executableURL = url
+    process.arguments = TartCommand.version.arguments
+    let outputURL = temporaryCommandOutputURL()
+    _ = FileManager.default.createFile(
+      atPath: outputURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
+    guard let outputHandle = try? FileHandle(forWritingTo: outputURL) else {
+      showAlert(title: "无法验证 Tart", message: "无法创建临时验证文件。")
+      return
+    }
+    process.standardOutput = outputHandle
+    process.standardError = outputHandle
+    do {
+      try process.run()
+    } catch {
+      try? outputHandle.close()
+      try? FileManager.default.removeItem(at: outputURL)
+      showAlert(title: "无法运行所选文件", message: error.localizedDescription)
+      return
+    }
+    operationProcess = process
+    operationOutputURL = outputURL
+    operationWasCancelled = false
+    showOperation("正在验证 Tart 可执行文件…")
+
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let completed = ProcessDeadline.waitForExit(process, timeout: 5)
+      try? outputHandle.close()
+      let data = (try? Data(contentsOf: outputURL)) ?? Data()
+      try? FileManager.default.removeItem(at: outputURL)
+      let output = String(data: data, encoding: .utf8) ?? ""
+      DispatchQueue.main.async {
+        guard let self else { return }
+        let wasCancelled = self.operationWasCancelled
+        if self.operationProcess === process { self.operationProcess = nil }
+        self.operationWasCancelled = false
+        self.hideOperation()
+        guard !self.isQuitting, !wasCancelled else { return }
+        guard completed, process.terminationStatus == 0,
+          TartVersionValidation.isPlausible(output)
+        else {
+          let detail = output.trimmingCharacters(in: .whitespacesAndNewlines)
+          let reason =
+            completed
+            ? (detail.isEmpty ? "所选文件没有返回可识别的 Tart 版本。" : String(detail.suffix(1000)))
+            : "所选文件执行 --version 超过 5 秒，验证已终止。"
+          self.showAlert(title: "所选文件不是可用的 Tart", message: reason)
+          return
+        }
+        UserDefaults.standard.set(url.path, forKey: tartExecutablePathKey)
+        self.appendApplicationLog(
+          "已验证并选择自定义 Tart 可执行文件：\(url.path)（\(output.trimmingCharacters(in: .whitespacesAndNewlines))）"
+        )
+        self.resyncAfterTartExecutableChange()
+      }
+    }
   }
 
   @objc private func cancelOperation() {
@@ -1185,13 +1282,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   private func configureTartProcess(_ process: Process, arguments: [String]) {
-    if let executable = TartExecutableLocator.locate() {
+    if let executable = tartExecutableURL {
       process.executableURL = executable
       process.arguments = arguments
     } else {
       process.executableURL = URL(fileURLWithPath: "/bin/zsh")
       process.arguments = TartShellBridge.arguments(for: arguments)
     }
+  }
+
+  private func resyncAfterTartExecutableChange() {
+    tartInstalled = true
+    tartSyncError = nil
+    for configuration in configurations { states[configuration.id] = .unknown }
+    refreshUI()
+    syncTartState()
   }
 
   private func stopVM(id: UUID) {
@@ -1483,7 +1588,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     cancelOperationButton?.isHidden = true
     cancelOperationButton?.isEnabled = true
     imageButton?.isEnabled = tartInstalled
-    moreButton?.isEnabled = true
+    moreButton?.isEnabled = tartInstalled
   }
 
   private func refreshOperationProgress() {
@@ -1594,6 +1699,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     nameField?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
   }
 
+  private var configuredTartExecutablePath: String? {
+    guard
+      let path = UserDefaults.standard.string(forKey: tartExecutablePathKey)?
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+      !path.isEmpty
+    else { return nil }
+    return path
+  }
+
+  private var tartExecutableURL: URL? {
+    TartExecutableLocator.locate(explicitPath: configuredTartExecutablePath)
+  }
+
+  private var tartExecutableDescription: String {
+    let locatedPath = tartExecutableURL?.path
+    guard let configuredPath = configuredTartExecutablePath else {
+      return locatedPath ?? "登录 shell PATH（未发现标准安装路径）"
+    }
+    if locatedPath == configuredPath { return "\(configuredPath)（自定义）" }
+    if let locatedPath {
+      return "\(locatedPath)（自定义路径不可用，已自动回退）"
+    }
+    return "\(configuredPath)（自定义路径不可用，将尝试登录 shell PATH）"
+  }
+
+  private var diagnosticTartExecutableDescription: String {
+    tartExecutableDescription.replacingOccurrences(
+      of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
+  }
+
   private var selectedRow: Int? {
     guard let tableView, tableView.selectedRow >= 0 else { return nil }
     return tableView.selectedRow
@@ -1679,7 +1814,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     #else
       let architecture = "unknown"
     #endif
-    let tartPath = TartExecutableLocator.locate()?.path ?? "登录 shell PATH（未发现标准安装路径）"
+    let tartPath = diagnosticTartExecutableDescription
     let tartStatus: String
     if !tartInstalled {
       tartStatus = "未安装"
@@ -1730,7 +1865,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)
       Architecture: \(architecture)
       Tart: \(tartVersion)
-      Tart executable: \(TartExecutableLocator.locate()?.path ?? "登录 shell PATH")
+      Tart executable: \(tartExecutableDescription)
       State synchronization: \(tartSyncError == nil ? "正常" : "异常")
       """
   }
@@ -1989,8 +2124,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     installLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
     let installButton = NSButton(
       title: "复制命令并打开终端", target: self, action: #selector(copyInstallCommandAndOpenTerminal))
+    let chooseTartButton = NSButton(
+      title: "选择已有 Tart…", target: self, action: #selector(chooseTartExecutable))
     let docsButton = NSButton(title: "安装文档", target: self, action: #selector(openQuickStart))
-    let installRow = NSStackView(views: [installLabel, NSView(), installButton, docsButton])
+    let installRow = NSStackView(views: [
+      installLabel, NSView(), installButton, chooseTartButton, docsButton,
+    ])
     installRow.orientation = .horizontal
     installRow.spacing = 10
     installRow.translatesAutoresizingMaskIntoConstraints = false
@@ -2163,6 +2302,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       title: "打开 TartR 日志", action: #selector(openApplicationLog), keyEquivalent: "")
     appLog.target = self
     appMenu.addItem(appLog)
+    let chooseTart = NSMenuItem(
+      title: "选择 Tart 可执行文件…", action: #selector(chooseTartExecutable), keyEquivalent: "")
+    chooseTart.target = self
+    appMenu.addItem(chooseTart)
+    let resetTart = NSMenuItem(
+      title: "恢复自动检测 Tart", action: #selector(resetTartExecutable), keyEquivalent: "")
+    resetTart.target = self
+    appMenu.addItem(resetTart)
     let environment = NSMenuItem(
       title: "运行环境…", action: #selector(showEnvironmentInfo), keyEquivalent: "")
     environment.target = self

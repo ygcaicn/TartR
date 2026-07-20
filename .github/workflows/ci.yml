@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-and-build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: Format lint
+        run: swift format lint --strict --recursive Sources Tests Package.swift
+      - name: Unit tests
+        run: swift test
+      - name: Build universal release
+        run: Scripts/build-app.sh
+      - name: Verify release
+        run: Scripts/verify-release.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TartR-development-release
+          path: |
+            outputs/TartR-4.0-macos.zip
+            outputs/TartR-4.0-macos.zip.sha256

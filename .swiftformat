@@ -1,0 +1,5 @@
+--swiftversion 5.10
+--indent 4
+--wraparguments before-first
+--wrapcollections before-first
+

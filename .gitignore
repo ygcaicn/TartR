@@ -1,0 +1,11 @@
+.build/
+.swiftpm/
+DerivedData/
+outputs/
+work/
+*.xcuserstate
+.DS_Store
+*.dSYM/
+*.zip
+*.tar.gz
+

@@ -9,6 +9,7 @@ All notable changes to TartR are documented here.
 - Homebrew 6 要求显式信任 Tart 的 `softnet` 依赖；安装引导现在只信任该具体官方 formula 后再安装 Tart
 - CI 和 Release 共用版本化安装脚本，避免 Homebrew tap 信任策略变化导致单元测试通过后构建中断
 - 不使用 `HOMEBREW_NO_REQUIRE_TAP_TRUST`，也不信任整个 Cirrus Labs tap，保持最小供应链授权范围
+- GitHub checkout 和 artifact 上传 action 升级到 Node.js 24 对应的 v5，消除 Node.js 20 弃用风险
 
 ### Verified
 

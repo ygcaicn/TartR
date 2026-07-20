@@ -4,6 +4,28 @@ import XCTest
 @testable import TartRCore
 
 final class TartRCoreTests: XCTestCase {
+  func testStorageCapacityPreflightKeepsReserveAndHandlesUnknownCapacity() {
+    let gib: UInt64 = 1_024 * 1_024 * 1_024
+    XCTAssertEqual(
+      StorageCapacityPreflight.assess(
+        availableBytes: Int64(35 * gib), operationBytes: 30 * gib),
+      .sufficient(availableBytes: 35 * gib, requiredBytes: 35 * gib))
+    XCTAssertEqual(
+      StorageCapacityPreflight.assess(
+        availableBytes: Int64(34 * gib), operationBytes: 30 * gib),
+      .insufficient(availableBytes: 34 * gib, requiredBytes: 35 * gib))
+    XCTAssertEqual(
+      StorageCapacityPreflight.assess(availableBytes: nil, operationBytes: 30 * gib),
+      .unavailable)
+    XCTAssertEqual(
+      StorageCapacityPreflight.assess(availableBytes: -1, operationBytes: 30 * gib),
+      .unavailable)
+    XCTAssertEqual(
+      StorageCapacityPreflight.assess(
+        availableBytes: Int64.max, operationBytes: UInt64.max, reserveBytes: 1),
+      .insufficient(availableBytes: UInt64(Int64.max), requiredBytes: UInt64.max))
+  }
+
   func testTartVersionValidationRejectsUnrelatedExecutables() {
     XCTAssertTrue(TartVersionValidation.isPlausible("2.32.1"))
     XCTAssertTrue(TartVersionValidation.isPlausible("tart 2.33.0-beta.1"))

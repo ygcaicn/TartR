@@ -593,6 +593,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       showAlert(title: "镜像地址无效", message: "请输入 OCI 镜像地址或本地源 VM 名称。")
       return
     }
+    guard
+      confirmStorageCapacity(
+        operation: "下载并克隆镜像",
+        operationBytes: 30 * 1_024 * 1_024 * 1_024,
+        at: FileManager.default.homeDirectoryForCurrentUser,
+        offersCacheCleanup: true)
+    else { return }
     runManagedTartCommand(
       TartCommand.clone(source: selectedSource, name: name).arguments,
       title: "正在下载 \(item.os) · \(item.kind)…"
@@ -693,6 +700,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     else { return }
     let name = values[0]
     guard validNewVMName(name) else { return }
+    let archiveSize =
+      (try? archiveURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(UInt64.init) ?? 0
+    let doubledArchiveSize = archiveSize.multipliedReportingOverflow(by: 2)
+    let estimatedImportBytes = max(
+      doubledArchiveSize.overflow ? UInt64.max : doubledArchiveSize.partialValue,
+      20 * 1_024 * 1_024 * 1_024)
+    guard
+      confirmStorageCapacity(
+        operation: "导入虚拟机归档",
+        operationBytes: estimatedImportBytes,
+        at: FileManager.default.homeDirectoryForCurrentUser,
+        offersCacheCleanup: true)
+    else { return }
     runManagedTartCommand(
       TartCommand.importArchive(path: archiveURL.path, name: name).arguments,
       title: "正在导入 \(archiveURL.lastPathComponent)…"
@@ -714,6 +734,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     panel.canCreateDirectories = true
     panel.nameFieldStringValue = "\(configuration.name).tvm"
     guard panel.runModal() == .OK, let archiveURL = panel.url else { return }
+    let estimatedGB = max(infoByName[configuration.name]?.size ?? 20, 1)
+    guard
+      confirmStorageCapacity(
+        operation: "导出虚拟机归档",
+        operationBytes: UInt64(estimatedGB) * 1_024 * 1_024 * 1_024,
+        at: archiveURL.deletingLastPathComponent(),
+        offersCacheCleanup: false)
+    else { return }
 
     runManagedTartCommand(
       TartCommand.exportArchive(name: configuration.name, path: archiveURL.path).arguments,
@@ -987,6 +1015,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       showAlert(title: "磁盘大小无效", message: "请输入 1 至 65535 GB 之间的整数。")
       return
     }
+    guard
+      confirmStorageCapacity(
+        operation: macOS ? "下载 IPSW 并创建 macOS VM" : "创建 Linux VM",
+        operationBytes: UInt64(macOS ? 30 : 5) * 1_024 * 1_024 * 1_024,
+        at: FileManager.default.homeDirectoryForCurrentUser,
+        offersCacheCleanup: true)
+    else { return }
     let arguments =
       macOS
       ? TartCommand.createMac(name: values[0], diskSize: values[1]).arguments
@@ -1695,6 +1730,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       .appendingPathComponent("tartr-command-\(UUID().uuidString).log")
   }
 
+  private func availableStorageBytes(at url: URL) -> Int64? {
+    let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+    return values?.volumeAvailableCapacityForImportantUsage
+  }
+
+  private func storageByteString(_ bytes: UInt64) -> String {
+    guard bytes <= UInt64(Int64.max) else { return "超过 8 EB" }
+    return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+  }
+
+  private var hostAvailableStorageDescription: String {
+    guard
+      let bytes = availableStorageBytes(at: FileManager.default.homeDirectoryForCurrentUser),
+      bytes >= 0
+    else { return "unknown" }
+    return storageByteString(UInt64(bytes))
+  }
+
+  private func confirmStorageCapacity(
+    operation: String,
+    operationBytes: UInt64,
+    at volumeURL: URL,
+    offersCacheCleanup: Bool
+  ) -> Bool {
+    let assessment = StorageCapacityPreflight.assess(
+      availableBytes: availableStorageBytes(at: volumeURL),
+      operationBytes: operationBytes)
+    guard case .insufficient(let availableBytes, let requiredBytes) = assessment else {
+      return true
+    }
+
+    let alert = NSAlert()
+    alert.alertStyle = .critical
+    alert.messageText = "可用磁盘空间可能不足"
+    alert.informativeText =
+      "\(operation)预计需要约 \(storageByteString(requiredBytes))（包含 5 GB 安全余量），"
+      + "目标卷当前可用 \(storageByteString(availableBytes))。继续可能导致操作失败或宿主机空间耗尽。"
+    alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: "仍然继续")
+    if offersCacheCleanup { alert.addButton(withTitle: "清理 Tart 缓存…") }
+    switch alert.runModal() {
+    case .alertSecondButtonReturn:
+      return true
+    case .alertThirdButtonReturn where offersCacheCleanup:
+      pruneCaches()
+      return false
+    default:
+      return false
+    }
+  }
+
   private var normalizedInputName: String {
     nameField?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
   }
@@ -1836,6 +1922,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       Architecture: \(architecture)
       Tart executable: \(tartPath)
       Tart status: \(tartStatus)
+      Host volume available: \(hostAvailableStorageDescription)
       Saved/local VMs: \(configurations.count)/\(discoveredNames.count)
       Running/suspended/missing: \(runningCount)/\(suspendedCount)/\(missingCount)
       Headless/suspendable profiles: \(configurations.filter { $0.runOptions.headless }.count)/\(configurations.filter { $0.runOptions.suspendable }.count)
@@ -1866,6 +1953,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       Architecture: \(architecture)
       Tart: \(tartVersion)
       Tart executable: \(tartExecutableDescription)
+      Host volume available: \(hostAvailableStorageDescription)
       State synchronization: \(tartSyncError == nil ? "正常" : "异常")
       """
   }
@@ -1978,16 +2066,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     } else {
       let selectedCount = selectedConfigurations.count
       let selectionSuffix = selectedCount > 1 ? " 已选择 \(selectedCount) 台。" : ""
+      let availableStorage = availableStorageBytes(
+        at: FileManager.default.homeDirectoryForCurrentUser)
+      let storageSuffix =
+        availableStorage.map {
+          " 宿主卷可用 \(storageByteString(UInt64(max($0, 0))))。"
+        } ?? ""
       if isFiltering {
         summaryLabel?.stringValue =
-          "显示 \(visible.count) / \(total) 台虚拟机，\(runningCount) 台正在运行。\(selectionSuffix)"
+          "显示 \(visible.count) / \(total) 台虚拟机，\(runningCount) 台正在运行。\(selectionSuffix)\(storageSuffix)"
       } else {
         summaryLabel?.stringValue =
           runningCount == 0
-          ? "已发现/保存 \(total) 台虚拟机，没有正在运行的实例。\(selectionSuffix)"
-          : "已发现/保存 \(total) 台虚拟机，\(runningCount) 台正在运行。\(selectionSuffix)"
+          ? "已发现/保存 \(total) 台虚拟机，没有正在运行的实例。\(selectionSuffix)\(storageSuffix)"
+          : "已发现/保存 \(total) 台虚拟机，\(runningCount) 台正在运行。\(selectionSuffix)\(storageSuffix)"
       }
-      summaryLabel?.textColor = .secondaryLabelColor
+      let lowStorageThreshold: Int64 = 15 * 1_024 * 1_024 * 1_024
+      summaryLabel?.textColor =
+        availableStorage.map { $0 < lowStorageThreshold } == true
+        ? .systemOrange : .secondaryLabelColor
     }
   }
 

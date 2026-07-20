@@ -276,6 +276,20 @@ public enum SSHConnectionCommand {
   }
 }
 
+public enum GuestShellCommandValidation: Equatable, Sendable {
+  case valid
+  case empty
+  case tooLong
+  case containsNull
+
+  public static func validate(_ command: String) -> GuestShellCommandValidation {
+    guard !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .empty }
+    guard command.utf8.count <= 4_096 else { return .tooLong }
+    guard !command.contains("\0") else { return .containsNull }
+    return .valid
+  }
+}
+
 public enum VMState: Equatable, Sendable {
   case unknown
   case missing

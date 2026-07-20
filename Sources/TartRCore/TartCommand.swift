@@ -10,6 +10,7 @@ public enum TartCommand: Equatable, Sendable {
   case delete(name: String)
   case ip(name: String, wait: Int)
   case suspend(name: String)
+  case execShell(name: String, command: String)
   case get(name: String)
   case push(name: String, remoteName: String)
   case exportArchive(name: String, path: String)
@@ -45,6 +46,8 @@ public enum TartCommand: Equatable, Sendable {
       return ["ip", name, "--wait", String(wait)]
     case .suspend(let name):
       return ["suspend", name]
+    case .execShell(let name, let command):
+      return ["exec", name, "/bin/zsh", "-lc", command]
     case .get(let name):
       return ["get", name, "--format", "json"]
     case .push(let name, let remoteName):
@@ -121,5 +124,19 @@ public enum TartShellBridge {
 
   public static func arguments(for tartArguments: [String]) -> [String] {
     ["-lic", script, "TartR"] + tartArguments
+  }
+}
+
+public enum TartCommandAuditLog {
+  public static func format(
+    arguments: [String], terminationStatus: Int32, cancelled: Bool, output: String
+  ) -> String {
+    if arguments.first == "exec" {
+      let vmName = arguments.indices.contains(1) ? arguments[1] : "unknown"
+      return
+        "tart exec \(vmName) <guest command and output redacted>\nstatus=\(terminationStatus) cancelled=\(cancelled)"
+    }
+    return
+      "tart \(arguments.joined(separator: " "))\nstatus=\(terminationStatus) cancelled=\(cancelled)\n\(output)"
   }
 }

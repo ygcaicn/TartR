@@ -247,6 +247,11 @@ final class TartRCoreTests: XCTestCase {
     XCTAssertEqual(VMNameValidation.validate("a/b", existingNames: []), .containsSlash)
     XCTAssertEqual(VMNameValidation.validate("VM", existingNames: ["vm"]), .duplicate)
     XCTAssertEqual(VMNameValidation.validate("new-vm", existingNames: ["vm"]), .valid)
+    XCTAssertEqual(GuestShellCommandValidation.validate("uname -a"), .valid)
+    XCTAssertEqual(GuestShellCommandValidation.validate(" \n"), .empty)
+    XCTAssertEqual(GuestShellCommandValidation.validate("echo \0"), .containsNull)
+    XCTAssertEqual(
+      GuestShellCommandValidation.validate(String(repeating: "x", count: 4_097)), .tooLong)
   }
 
   func testVMResourceValidation() {
@@ -286,6 +291,18 @@ final class TartRCoreTests: XCTestCase {
       ["clone", "ghcr.io/example/image:latest", "local"])
     XCTAssertEqual(
       TartCommand.get(name: "vm").arguments, ["get", "vm", "--format", "json"])
+    let guestCommand = "printf '%s\\n' \"$(uname)\"; id"
+    XCTAssertEqual(
+      TartCommand.execShell(name: "vm name", command: guestCommand).arguments,
+      ["exec", "vm name", "/bin/zsh", "-lc", guestCommand])
+    let auditLog = TartCommandAuditLog.format(
+      arguments: TartCommand.execShell(name: "vm", command: "echo secret-token").arguments,
+      terminationStatus: 0,
+      cancelled: false,
+      output: "secret-output")
+    XCTAssertFalse(auditLog.contains("secret-token"))
+    XCTAssertFalse(auditLog.contains("secret-output"))
+    XCTAssertTrue(auditLog.contains("guest command and output redacted"))
     XCTAssertEqual(
       TartCommand.push(name: "vm", remoteName: "ghcr.io/acme/vm:latest").arguments,
       ["push", "vm", "ghcr.io/acme/vm:latest"])

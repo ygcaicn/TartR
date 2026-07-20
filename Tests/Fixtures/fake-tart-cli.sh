@@ -13,6 +13,6 @@ case "$1" in
   prune) print -- "--entries --older-than --space-budget" ;;
   set) print -- "--cpu --memory --display --disk-size" ;;
   create) print -- "--from-ipsw --linux --disk-size" ;;
-  clone|rename|delete|push|import|export|suspend) print "$1 help" ;;
+  clone|rename|delete|push|import|export|suspend|exec) print "$1 help" ;;
   *) exit 2 ;;
 esac

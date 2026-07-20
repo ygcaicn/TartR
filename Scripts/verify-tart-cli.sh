@@ -37,6 +37,7 @@ require_help rename
 require_help delete
 require_help ip --wait
 require_help suspend
+require_help exec
 require_help get --format
 require_help push
 require_help import

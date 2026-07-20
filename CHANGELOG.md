@@ -2,6 +2,21 @@
 
 All notable changes to TartR are documented here.
 
+## 4.16.0 - 2026-07-20
+
+### Added
+
+- 运行中的单台 VM 可通过 Tart Guest Agent 执行非交互式 Shell 命令，并在可复制文本窗口查看完整结果
+- 命令使用 `tart exec <VM> /bin/zsh -lc <命令>` 的独立参数调用，仅在客体 VM 中执行，不经过宿主机 shell
+- 命令输入限制为 4096 字节且拒绝空命令和空字符；输出继续使用 1 MB 有界采集
+- CLI 兼容检查新增 `tart exec`，当前 Tart 不支持该命令时 Release 会停止
+
+### Fixed
+
+- 多选或 VM 未运行时禁用客体命令入口，macOS 13 上明确提示 `tart exec` 需要 macOS 14 或更高版本
+- 命令失败不再只显示短错误提示，可查看和复制客体标准输出、标准错误及截断标记
+- 客体命令文本和输出不会写入 TartR 应用日志，避免意外持久化令牌或其他敏感结果
+
 ## 4.15.0 - 2026-07-20
 
 ### Added

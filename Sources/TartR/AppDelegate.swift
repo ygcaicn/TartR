@@ -1152,6 +1152,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     addMenuItem(
       "复制 SSH 命令并打开终端…", #selector(copySSHCommandAndOpenTerminal), to: menu,
       enabled: selectedConfiguration != nil && state.isRunning)
+    addMenuItem(
+      "在虚拟机内执行命令…", #selector(executeCommandInSelectedVM), to: menu,
+      enabled: selectedConfiguration != nil && state.isRunning)
     addMenuItem("挂起虚拟机", #selector(suspendSelectedVM), to: menu, enabled: state.isRunning)
     menu.addItem(.separator())
     addMenuItem("从最新 IPSW 创建 macOS VM…", #selector(createMacVM), to: menu)
@@ -1528,6 +1531,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       TartCommand.suspend(name: configuration.name).arguments, title: "正在挂起 \(configuration.name)…"
     ) { [weak self] success, _ in
       if success { self?.syncTartState() }
+    }
+  }
+
+  @objc private func executeCommandInSelectedVM() {
+    guard let configuration = selectedConfiguration else { return }
+    guard
+      ProcessInfo.processInfo.isOperatingSystemAtLeast(
+        OperatingSystemVersion(majorVersion: 14, minorVersion: 0, patchVersion: 0))
+    else {
+      showAlert(title: "需要 macOS 14 或更高版本", message: "tart exec 在宿主机 macOS 14 Sonoma 起可用。")
+      return
+    }
+    guard
+      let values = promptForValues(
+        title: "在 \(configuration.name) 内执行命令",
+        message: "需要 VM 内运行 Tart Guest Agent。命令仅在客体 VM 的 /bin/zsh 中执行，不经过宿主机 shell。",
+        fields: [("Shell 命令", "uname -a", true)])
+    else { return }
+    let command = values[0]
+    guard GuestShellCommandValidation.validate(command) == .valid else {
+      showAlert(title: "命令无效", message: "命令不能为空、包含空字符或超过 4096 字节。")
+      return
+    }
+    runManagedTartCommand(
+      TartCommand.execShell(name: configuration.name, command: command).arguments,
+      title: "正在 \(configuration.name) 内执行命令…",
+      showsSuccessAlert: false,
+      showsFailureAlert: false
+    ) { [weak self] success, output in
+      guard let self else { return }
+      let content = output.isEmpty ? "（命令没有输出）" : output
+      self.showTextViewer(
+        title: success ? "命令执行完成" : "命令执行失败",
+        text: "$ \(command)\n\n\(content)")
     }
   }
 
@@ -2102,8 +2139,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         self.hideOperation()
         let success = !wasCancelled && process.terminationStatus == 0
         self.appendApplicationLog(
-          "tart \(arguments.joined(separator: " "))\nstatus=\(process.terminationStatus) cancelled=\(wasCancelled)\n\(output)"
-        )
+          TartCommandAuditLog.format(
+            arguments: arguments,
+            terminationStatus: process.terminationStatus,
+            cancelled: wasCancelled,
+            output: output))
         if wasCancelled {
           // User cancellation is an expected outcome, not a success or failure alert.
         } else if success {

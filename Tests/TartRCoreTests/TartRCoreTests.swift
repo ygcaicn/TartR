@@ -4,6 +4,39 @@ import XCTest
 @testable import TartRCore
 
 final class TartRCoreTests: XCTestCase {
+  func testBoundedProcessOutputCapturesSmallOutput() throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/printf")
+    process.arguments = ["hello"]
+    let capture = BoundedProcessOutput(maximumBytes: 64)
+    capture.attach(to: process)
+    try process.run()
+    capture.processDidStart()
+    process.waitUntilExit()
+
+    let result = capture.finish()
+    XCTAssertEqual(process.terminationStatus, 0)
+    XCTAssertEqual(result, BoundedOutputSnapshot(data: Data("hello".utf8), wasTruncated: false))
+    XCTAssertEqual(result.text, "hello")
+  }
+
+  func testBoundedProcessOutputDrainsAndTruncatesLargeOutput() throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/dd")
+    process.arguments = ["if=/dev/zero", "bs=1048576", "count=2"]
+    let capture = BoundedProcessOutput(maximumBytes: 1_024)
+    capture.attach(to: process)
+    try process.run()
+    capture.processDidStart()
+    XCTAssertTrue(ProcessDeadline.waitForExit(process, timeout: 5))
+
+    let result = capture.finish()
+    XCTAssertEqual(process.terminationStatus, 0)
+    XCTAssertTrue(result.wasTruncated)
+    XCTAssertEqual(result.data.count, 1_024)
+    XCTAssertTrue(result.text.hasPrefix("[较早的输出已省略]\n"))
+  }
+
   func testAppVersionComparisonAndUpdateManifestValidation() {
     XCTAssertLessThan(AppVersion("4.10.0")!, AppVersion("4.11")!)
     XCTAssertEqual(AppVersion("v4.11.0"), AppVersion("4.11"))

@@ -13,6 +13,7 @@ private let selectedVMKey = "selectedVM.v2"
 private let tartExecutablePathKey = "tartExecutablePath.v1"
 private let automaticUpdateChecksKey = "automaticUpdateChecks.v1"
 private let lastUpdateCheckKey = "lastUpdateCheck.v1"
+private let maximumCommandOutputBytes = 1_024 * 1_024
 private let legacyAppIDs = [
   "local.caiyagang.tartr",
   "local.caiyagang.tart-vm-manager",
@@ -139,7 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   private var tartSyncError: String?
   private var tartInstalled = true
   private var operationProcess: Process?
-  private var operationOutputURL: URL?
+  private var operationOutputCapture: BoundedProcessOutput?
   private var operationBaseTitle: String?
   private var operationProgressTimer: Timer?
   private var operationWasCancelled = false
@@ -696,34 +697,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     let process = Process()
     process.executableURL = url
     process.arguments = TartCommand.version.arguments
-    let outputURL = temporaryCommandOutputURL()
-    _ = FileManager.default.createFile(
-      atPath: outputURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
-    guard let outputHandle = try? FileHandle(forWritingTo: outputURL) else {
-      showAlert(title: "无法验证 Tart", message: "无法创建临时验证文件。")
-      return
-    }
-    process.standardOutput = outputHandle
-    process.standardError = outputHandle
+    let outputCapture = BoundedProcessOutput(maximumBytes: maximumCommandOutputBytes)
+    outputCapture.attach(to: process)
     do {
       try process.run()
+      outputCapture.processDidStart()
     } catch {
-      try? outputHandle.close()
-      try? FileManager.default.removeItem(at: outputURL)
+      _ = outputCapture.finish()
       showAlert(title: "无法运行所选文件", message: error.localizedDescription)
       return
     }
     operationProcess = process
-    operationOutputURL = outputURL
+    operationOutputCapture = outputCapture
     operationWasCancelled = false
     showOperation("正在验证 Tart 可执行文件…")
 
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       let completed = ProcessDeadline.waitForExit(process, timeout: 5)
-      try? outputHandle.close()
-      let data = (try? Data(contentsOf: outputURL)) ?? Data()
-      try? FileManager.default.removeItem(at: outputURL)
-      let output = String(data: data, encoding: .utf8) ?? ""
+      let captured = outputCapture.finish()
+      let output = captured.text
       DispatchQueue.main.async {
         guard let self else { return }
         let wasCancelled = self.operationWasCancelled
@@ -731,14 +723,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         self.operationWasCancelled = false
         self.hideOperation()
         guard !self.isQuitting, !wasCancelled else { return }
-        guard completed, process.terminationStatus == 0,
+        guard !captured.wasTruncated, completed, process.terminationStatus == 0,
           TartVersionValidation.isPlausible(output)
         else {
           let detail = output.trimmingCharacters(in: .whitespacesAndNewlines)
           let reason =
-            completed
-            ? (detail.isEmpty ? "所选文件没有返回可识别的 Tart 版本。" : String(detail.suffix(1000)))
-            : "所选文件执行 --version 超过 5 秒，验证已终止。"
+            captured.wasTruncated
+            ? "所选文件的版本输出超过 1 MB 安全上限。"
+            : completed
+              ? (detail.isEmpty ? "所选文件没有返回可识别的 Tart 版本。" : String(detail.suffix(1000)))
+              : "所选文件执行 --version 超过 5 秒，验证已终止。"
           self.showAlert(title: "所选文件不是可用的 Tart", message: reason)
           return
         }
@@ -1625,36 +1619,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     }
 
     let process = Process()
-    let outputURL = temporaryCommandOutputURL()
-    _ = FileManager.default.createFile(
-      atPath: outputURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
-    guard let outputHandle = try? FileHandle(forWritingTo: outputURL) else {
-      showAlert(title: "无法停止 \(configuration.name)", message: "无法创建临时日志文件。")
-      return
-    }
+    let outputCapture = BoundedProcessOutput(maximumBytes: maximumCommandOutputBytes)
     configureTartProcess(
       process, arguments: TartCommand.stop(name: configuration.name, timeout: 8).arguments)
-    process.standardError = outputHandle
-    process.standardOutput = outputHandle
+    outputCapture.attach(to: process)
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       do {
         try process.run()
+        outputCapture.processDidStart()
         process.waitUntilExit()
-        try? outputHandle.close()
-        let errorData = (try? Data(contentsOf: outputURL)) ?? Data()
-        try? FileManager.default.removeItem(at: outputURL)
+        let output = outputCapture.finish().text
         DispatchQueue.main.async {
           guard let self else { return }
           self.syncTartState {
             if process.terminationStatus != 0, self.states[id]?.isRunning == true {
-              let details = String(data: errorData, encoding: .utf8) ?? "tart stop 失败"
+              let details = output.isEmpty ? "tart stop 失败" : output
               self.showAlert(title: "无法停止 \(configuration.name)", message: details)
             }
           }
         }
       } catch {
-        try? outputHandle.close()
-        try? FileManager.default.removeItem(at: outputURL)
+        _ = outputCapture.finish()
         DispatchQueue.main.async {
           self?.states[id] = .failed(-1)
           self?.refreshUI()
@@ -1702,22 +1687,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     let process = Process()
     configureTartProcess(process, arguments: TartCommand.listLocalJSON.arguments)
-    let outputURL = temporaryCommandOutputURL()
-    _ = FileManager.default.createFile(
-      atPath: outputURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
-    guard let outputHandle = try? FileHandle(forWritingTo: outputURL) else {
-      tartSyncError = "无法创建临时状态文件"
-      finishSync()
-      return
-    }
-    process.standardOutput = outputHandle
-    process.standardError = outputHandle
+    let outputCapture = BoundedProcessOutput(maximumBytes: maximumCommandOutputBytes)
+    outputCapture.attach(to: process)
 
     do {
       try process.run()
+      outputCapture.processDidStart()
     } catch {
-      try? outputHandle.close()
-      try? FileManager.default.removeItem(at: outputURL)
+      _ = outputCapture.finish()
       tartSyncError = error.localizedDescription
       finishSync()
       return
@@ -1725,14 +1702,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     syncProcess = process
     DispatchQueue.global(qos: .utility).async { [weak self] in
       let completedBeforeTimeout = ProcessDeadline.waitForExit(process, timeout: 15)
-      try? outputHandle.close()
-      let output = (try? Data(contentsOf: outputURL)) ?? Data()
-      try? FileManager.default.removeItem(at: outputURL)
+      let captured = outputCapture.finish()
+      let output = captured.data
       DispatchQueue.main.async {
         guard let self else { return }
         if self.syncProcess === process { self.syncProcess = nil }
         if !completedBeforeTimeout {
           self.tartSyncError = "tart list 超过 15 秒未响应，已终止本次状态同步"
+          self.finishSync()
+        } else if captured.wasTruncated {
+          self.tartSyncError = "tart list 输出超过 1 MB 安全上限，已忽略本次状态同步"
           self.finishSync()
         } else if process.terminationStatus == 0,
           let infos = try? TartListParser.parse(output)
@@ -1803,37 +1782,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     }
 
     let process = Process()
-    let outputURL = temporaryCommandOutputURL()
-    _ = FileManager.default.createFile(
-      atPath: outputURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
-    guard let outputHandle = try? FileHandle(forWritingTo: outputURL) else {
-      showAlert(title: "无法运行 Tart", message: "无法创建临时任务日志文件。")
-      completion(false, "无法创建临时任务日志文件")
-      return
-    }
+    let outputCapture = BoundedProcessOutput(maximumBytes: maximumCommandOutputBytes)
     configureTartProcess(process, arguments: arguments)
-    process.standardOutput = outputHandle
-    process.standardError = outputHandle
+    outputCapture.attach(to: process)
     do {
       try process.run()
+      outputCapture.processDidStart()
     } catch {
-      try? outputHandle.close()
-      try? FileManager.default.removeItem(at: outputURL)
+      _ = outputCapture.finish()
       showAlert(title: "无法运行 Tart", message: error.localizedDescription)
       completion(false, error.localizedDescription)
       return
     }
     operationProcess = process
-    operationOutputURL = outputURL
+    operationOutputCapture = outputCapture
     operationWasCancelled = false
     showOperation(title)
 
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       process.waitUntilExit()
-      try? outputHandle.close()
-      let data = (try? Data(contentsOf: outputURL)) ?? Data()
-      try? FileManager.default.removeItem(at: outputURL)
-      let output = String(data: data, encoding: .utf8) ?? ""
+      let captured = outputCapture.finish()
+      let output = captured.text
       DispatchQueue.main.async {
         guard let self else { return }
         let wasCancelled = self.operationWasCancelled
@@ -1888,7 +1857,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   private func hideOperation() {
     operationProgressTimer?.invalidate()
     operationProgressTimer = nil
-    operationOutputURL = nil
+    operationOutputCapture = nil
     operationBaseTitle = nil
     operationLabel?.isHidden = true
     operationSpinner?.stopAnimation(nil)
@@ -1900,19 +1869,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   private func refreshOperationProgress() {
-    guard let outputURL = operationOutputURL,
-      let baseTitle = operationBaseTitle,
-      let handle = try? FileHandle(forReadingFrom: outputURL)
+    guard let outputCapture = operationOutputCapture,
+      let baseTitle = operationBaseTitle
     else { return }
-    defer { try? handle.close() }
-
-    let size = (try? handle.seekToEnd()) ?? 0
-    guard size > 0 else { return }
-    let readSize = min(UInt64(4096), size)
-    try? handle.seek(toOffset: size - readSize)
-    guard let data = try? handle.read(upToCount: Int(readSize)),
-      let text = String(data: data, encoding: .utf8)
-    else { return }
+    let snapshot = outputCapture.snapshot()
+    guard !snapshot.data.isEmpty else { return }
+    let text = String(decoding: snapshot.data.suffix(4096), as: UTF8.self)
 
     let lines = text.components(separatedBy: CharacterSet.newlines.union(.init(charactersIn: "\r")))
     guard
@@ -1996,11 +1958,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     }
     grid.frame = NSRect(x: 0, y: 0, width: width, height: CGFloat(rows.count * 34))
     return grid
-  }
-
-  private func temporaryCommandOutputURL() -> URL {
-    FileManager.default.temporaryDirectory
-      .appendingPathComponent("tartr-command-\(UUID().uuidString).log")
   }
 
   private func availableStorageBytes(at url: URL) -> Int64? {

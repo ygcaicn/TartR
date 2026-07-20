@@ -18,7 +18,7 @@ An Apple Development certificate is not sufficient. The certificate must be a va
 2. Add the release section to `CHANGELOG.md`.
 3. Install the current Tart release, then run `make check`, `make compat`, `make build`, and `make verify` locally.
 4. Commit the release changes.
-5. Create and push an annotated tag matching the version exactly, for example `v4.12.1`.
+5. Create and push an annotated tag matching the version exactly, for example `v4.13.0`.
 6. The Release workflow imports the certificate into an ephemeral keychain, injects the repository-specific HTTPS update manifest URL, builds both architectures, signs with Hardened Runtime, notarizes and staples both the App and DMG, verifies ZIP/DMG/update manifest, and publishes binaries plus checksums, update metadata, and source.
 
 The stable update endpoint is `https://github.com/<owner>/<repo>/releases/latest/download/TartR-update.json`. Local builds leave `TartRUpdateManifestURL` empty and do not make automatic update requests.

@@ -11,6 +11,8 @@ public enum TartCommand: Equatable, Sendable {
   case suspend(name: String)
   case get(name: String)
   case push(name: String, remoteName: String)
+  case exportArchive(name: String, path: String)
+  case importArchive(path: String, name: String)
   case pruneCaches(olderThan: String?, spaceBudget: String?)
   case set(name: String, cpu: String?, memory: String?, display: String?, diskSize: String?)
   case createMac(name: String, diskSize: String)
@@ -38,6 +40,10 @@ public enum TartCommand: Equatable, Sendable {
       return ["get", name, "--format", "json"]
     case .push(let name, let remoteName):
       return ["push", name, remoteName]
+    case .exportArchive(let name, let path):
+      return ["export", name, path]
+    case .importArchive(let path, let name):
+      return ["import", path, name]
     case .pruneCaches(let olderThan, let spaceBudget):
       var result = ["prune", "--entries", "caches"]
       if let olderThan, !olderThan.isEmpty { result += ["--older-than", olderThan] }

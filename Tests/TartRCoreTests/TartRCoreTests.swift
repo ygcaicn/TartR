@@ -62,6 +62,12 @@ final class TartRCoreTests: XCTestCase {
       TartCommand.push(name: "vm", remoteName: "ghcr.io/acme/vm:latest").arguments,
       ["push", "vm", "ghcr.io/acme/vm:latest"])
     XCTAssertEqual(
+      TartCommand.exportArchive(name: "vm", path: "/tmp/vm backup.tvm").arguments,
+      ["export", "vm", "/tmp/vm backup.tvm"])
+    XCTAssertEqual(
+      TartCommand.importArchive(path: "/tmp/vm backup.tvm", name: "restored-vm").arguments,
+      ["import", "/tmp/vm backup.tvm", "restored-vm"])
+    XCTAssertEqual(
       TartCommand.pruneCaches(olderThan: "30", spaceBudget: "100").arguments,
       ["prune", "--entries", "caches", "--older-than", "30", "--space-budget", "100"])
   }
@@ -113,5 +119,22 @@ final class TartRCoreTests: XCTestCase {
         sortKey: .disk, ascending: false
       ).map(\.name),
       ["beta", "alpha"])
+  }
+
+  func testProcessDeadlineAllowsNormalExit() throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+    try process.run()
+    XCTAssertTrue(ProcessDeadline.waitForExit(process, timeout: 1, cancellationGrace: 0.1))
+    XCTAssertEqual(process.terminationStatus, 0)
+  }
+
+  func testProcessDeadlineTerminatesHungProcess() throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    process.arguments = ["5"]
+    try process.run()
+    XCTAssertFalse(ProcessDeadline.waitForExit(process, timeout: 0.05, cancellationGrace: 0.1))
+    XCTAssertFalse(process.isRunning)
   }
 }

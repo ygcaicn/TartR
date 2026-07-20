@@ -2,6 +2,7 @@ import AppKit
 import Darwin
 import Foundation
 import TartRCore
+import UniformTypeIdentifiers
 
 private let appTitle = "TartR"
 private let defaultsKey = "vmConfigurations.v2"
@@ -61,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   private var infoByName: [String: TartVMInfo] = [:]
   private var syncTimer: Timer?
   private var syncInProgress = false
+  private var syncProcess: Process?
   private var syncCompletions: [() -> Void] = []
   private var tartSyncError: String?
   private var tartInstalled = true
@@ -118,11 +120,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     return true
   }
 
+  func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
+    true
+  }
+
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     syncTimer?.invalidate()
     var runningProcesses = runtimes.values.map(\.process).filter(\.isRunning)
     if let operationProcess, operationProcess.isRunning {
       runningProcesses.append(operationProcess)
+    }
+    if let syncProcess, syncProcess.isRunning {
+      runningProcesses.append(syncProcess)
     }
     guard !runningProcesses.isEmpty else { return .terminateNow }
     guard !isQuitting else { return .terminateLater }
@@ -137,6 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       operationWasCancelled = true
       operationProcess.interrupt()
     }
+    syncProcess?.interrupt()
     refreshUI()
 
     DispatchQueue.global(qos: .userInitiated).async {
@@ -428,6 +438,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       "查看详细配置…", #selector(showSelectedDetails), to: menu,
       enabled: selectedConfiguration != nil)
     menu.addItem(.separator())
+    addMenuItem("导入 .tvm 归档…", #selector(importVMArchive), to: menu)
+    addMenuItem(
+      "导出为 .tvm 归档…", #selector(exportSelectedVM), to: menu,
+      enabled: selectedConfiguration != nil && !state.isRunning
+        && selectedConfiguration.map { discoveredNames.contains($0.name) } == true)
     addMenuItem(
       "复制虚拟机…", #selector(cloneSelectedVM), to: menu,
       enabled: selectedConfiguration != nil && !state.isRunning)
@@ -475,6 +490,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       title: "正在复制 \(configuration.name)…"
     ) { [weak self] success, _ in
       if success { self?.syncAndSelect(name: newName) }
+    }
+  }
+
+  @objc private func importVMArchive() {
+    let panel = NSOpenPanel()
+    panel.title = "导入 Tart 虚拟机归档"
+    panel.message = "选择由 tart export 创建的 .tvm 文件。"
+    panel.allowedContentTypes = [UTType(filenameExtension: "tvm") ?? .data]
+    panel.allowsMultipleSelection = false
+    panel.canChooseDirectories = false
+    guard panel.runModal() == .OK, let archiveURL = panel.url else { return }
+
+    let suggestedName = archiveURL.deletingPathExtension().lastPathComponent
+    guard
+      let values = promptForValues(
+        title: "导入虚拟机",
+        message: "归档：\(archiveURL.lastPathComponent)",
+        fields: [("本地名称", suggestedName, true)])
+    else { return }
+    let name = values[0]
+    guard validNewVMName(name) else { return }
+    runManagedTartCommand(
+      TartCommand.importArchive(path: archiveURL.path, name: name).arguments,
+      title: "正在导入 \(archiveURL.lastPathComponent)…"
+    ) { [weak self] success, _ in
+      if success { self?.syncAndSelect(name: name) }
+    }
+  }
+
+  @objc private func exportSelectedVM() {
+    guard let configuration = selectedConfiguration,
+      discoveredNames.contains(configuration.name),
+      states[configuration.id]?.isRunning != true
+    else { return }
+
+    let panel = NSSavePanel()
+    panel.title = "导出 Tart 虚拟机归档"
+    panel.message = "导出可能需要较长时间，并占用接近虚拟机实际大小的磁盘空间。"
+    panel.allowedContentTypes = [UTType(filenameExtension: "tvm") ?? .data]
+    panel.canCreateDirectories = true
+    panel.nameFieldStringValue = "\(configuration.name).tvm"
+    guard panel.runModal() == .OK, let archiveURL = panel.url else { return }
+
+    runManagedTartCommand(
+      TartCommand.exportArchive(name: configuration.name, path: archiveURL.path).arguments,
+      title: "正在导出 \(configuration.name)…"
+    ) { success, _ in
+      if success { NSWorkspace.shared.activateFileViewerSelecting([archiveURL]) }
     }
   }
 
@@ -728,6 +791,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     NSWorkspace.shared.open(applicationLogURL)
   }
 
+  @objc private func exportDiagnostics() {
+    let panel = NSSavePanel()
+    panel.title = "导出 TartR 诊断信息"
+    panel.message = "报告不包含虚拟机名称、日志内容或 Registry 凭据。"
+    panel.allowedContentTypes = [.plainText]
+    panel.canCreateDirectories = true
+    let stamp = ISO8601DateFormatter().string(from: Date())
+      .replacingOccurrences(of: ":", with: "-")
+    panel.nameFieldStringValue = "TartR-Diagnostics-\(stamp).txt"
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+
+    let report = diagnosticsReport()
+    do {
+      try Data(report.utf8).write(to: url, options: .atomic)
+      NSWorkspace.shared.activateFileViewerSelecting([url])
+    } catch {
+      showAlert(title: "无法导出诊断信息", message: error.localizedDescription)
+    }
+  }
+
   @objc private func quitApp() {
     NSApp.terminate(nil)
   }
@@ -910,35 +993,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     process.standardOutput = outputHandle
     process.standardError = outputHandle
 
+    do {
+      try process.run()
+    } catch {
+      try? outputHandle.close()
+      try? FileManager.default.removeItem(at: outputURL)
+      tartSyncError = error.localizedDescription
+      finishSync()
+      return
+    }
+    syncProcess = process
     DispatchQueue.global(qos: .utility).async { [weak self] in
-      do {
-        try process.run()
-        process.waitUntilExit()
-        try? outputHandle.close()
-        let output = (try? Data(contentsOf: outputURL)) ?? Data()
-        try? FileManager.default.removeItem(at: outputURL)
-        DispatchQueue.main.async {
-          guard let self else { return }
-          if process.terminationStatus == 0,
-            let infos = try? TartListParser.parse(output)
-          {
-            self.applyTartState(infos)
-          } else {
-            self.tartInstalled = process.terminationStatus != 127
-            self.tartSyncError = String(data: output, encoding: .utf8)?
-              .trimmingCharacters(in: .whitespacesAndNewlines)
-            if self.tartSyncError?.isEmpty != false, process.terminationStatus == 127 {
-              self.tartSyncError = "尚未安装 Tart"
-            }
-            self.finishSync()
+      let completedBeforeTimeout = ProcessDeadline.waitForExit(process, timeout: 15)
+      try? outputHandle.close()
+      let output = (try? Data(contentsOf: outputURL)) ?? Data()
+      try? FileManager.default.removeItem(at: outputURL)
+      DispatchQueue.main.async {
+        guard let self else { return }
+        if self.syncProcess === process { self.syncProcess = nil }
+        if !completedBeforeTimeout {
+          self.tartSyncError = "tart list 超过 15 秒未响应，已终止本次状态同步"
+          self.finishSync()
+        } else if process.terminationStatus == 0,
+          let infos = try? TartListParser.parse(output)
+        {
+          self.applyTartState(infos)
+        } else {
+          self.tartInstalled = process.terminationStatus != 127
+          self.tartSyncError = String(data: output, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+          if self.tartSyncError?.isEmpty != false, process.terminationStatus == 127 {
+            self.tartSyncError = "尚未安装 Tart"
           }
-        }
-      } catch {
-        try? outputHandle.close()
-        try? FileManager.default.removeItem(at: outputURL)
-        DispatchQueue.main.async {
-          self?.tartSyncError = error.localizedDescription
-          self?.finishSync()
+          self.finishSync()
         }
       }
     }
@@ -1043,12 +1130,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             self.showAlert(
               title: "操作完成", message: title.replacingOccurrences(of: "正在", with: "已"))
           }
-        } else if process.terminationReason != .uncaughtSignal {
+        } else {
           let details = output.trimmingCharacters(in: .whitespacesAndNewlines)
+          let fallback =
+            process.terminationReason == .uncaughtSignal
+            ? "操作被意外中断（信号 \(process.terminationStatus)）"
+            : "退出状态码 \(process.terminationStatus)"
           self.showAlert(
             title: "Tart 操作失败",
-            message: details.isEmpty
-              ? "退出状态码 \(process.terminationStatus)" : String(details.suffix(3000)))
+            message: details.isEmpty ? fallback : String(details.suffix(3000)))
         }
         completion(success, output)
         self.syncTartState()
@@ -1252,6 +1342,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     _ = try? handle.seekToEnd()
     let stamp = ISO8601DateFormatter().string(from: Date())
     handle.write(Data("\n[\(stamp)] \(message)\n".utf8))
+  }
+
+  private func diagnosticsReport() -> String {
+    let version =
+      Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+      ?? "unknown"
+    let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+    #if arch(arm64)
+      let architecture = "arm64"
+    #elseif arch(x86_64)
+      let architecture = "x86_64"
+    #else
+      let architecture = "unknown"
+    #endif
+    let tartPath = TartExecutableLocator.locate()?.path ?? "登录 shell PATH（未发现标准安装路径）"
+    let tartStatus: String
+    if !tartInstalled {
+      tartStatus = "未安装"
+    } else if tartSyncError != nil {
+      tartStatus = "状态同步异常"
+    } else {
+      tartStatus = "可用"
+    }
+    let runningCount = states.values.filter { $0 == .running }.count
+    let suspendedCount = states.values.filter { $0 == .suspended }.count
+    let missingCount = states.values.filter { $0 == .missing }.count
+
+    return """
+      TartR diagnostics
+      Generated: \(ISO8601DateFormatter().string(from: Date()))
+      TartR: \(version) (\(build))
+      Bundle ID: \(Bundle.main.bundleIdentifier ?? "unknown")
+      macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)
+      Architecture: \(architecture)
+      Tart executable: \(tartPath)
+      Tart status: \(tartStatus)
+      Saved/local VMs: \(configurations.count)/\(discoveredNames.count)
+      Running/suspended/missing: \(runningCount)/\(suspendedCount)/\(missingCount)
+      TartR-owned running processes: \(runtimes.values.filter { $0.process.isRunning }.count)
+      Managed operation active: \(operationProcess?.isRunning == true ? "yes" : "no")
+
+      Privacy: VM names, command output, logs, and registry credentials are intentionally omitted.
+      """
   }
 
   private func loadConfigurations() {
@@ -1618,6 +1751,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       title: "打开 TartR 日志", action: #selector(openApplicationLog), keyEquivalent: "")
     appLog.target = self
     appMenu.addItem(appLog)
+    let diagnostics = NSMenuItem(
+      title: "导出诊断信息…", action: #selector(exportDiagnostics), keyEquivalent: "")
+    diagnostics.target = self
+    appMenu.addItem(diagnostics)
     let refresh = NSMenuItem(title: "刷新状态", action: #selector(refreshNow), keyEquivalent: "r")
     refresh.target = self
     appMenu.addItem(refresh)

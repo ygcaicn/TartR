@@ -11,10 +11,14 @@ require_help() {
   local command="$1"
   shift
   local output
-  output="$("$TART_BIN" "$command" --help 2>&1)" || {
-    print -u2 "Unable to read 'tart $command --help'."
+  if output="$("$TART_BIN" "$command" --help 2>&1)"; then
+    :
+  else
+    local exit_code=$?
+    print -u2 "Unable to read 'tart $command --help' (status $exit_code)."
+    [[ -z "$output" ]] || print -u2 -- "$output"
     exit 1
-  }
+  fi
   local expected
   for expected in "$@"; do
     if [[ "$output" != *"$expected"* ]]; then

@@ -11,6 +11,9 @@ is_running() {
 }
 
 case "$1" in
+  --version)
+    print '2.32.1-ui-test'
+    ;;
   list)
     local first=true
     print -n '['
@@ -26,7 +29,7 @@ case "$1" in
     print ']'
     ;;
   run)
-    name="$2"
+    name="${@[-1]}"
     if is_running "$name"; then
       print -u2 "virtual machine $name is already running"
       exit 1

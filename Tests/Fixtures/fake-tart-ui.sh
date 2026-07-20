@@ -1,5 +1,8 @@
 #!/bin/zsh
 case "$1" in
+  --version)
+    print '2.32.1-ui-test'
+    ;;
   list)
     if [[ -n "${FAKE_TART_LIST_DELAY:-}" ]]; then sleep "$FAKE_TART_LIST_DELAY"; fi
     print '[{"Source":"local","Name":"tahoe-base","Disk":50,"Size":12,"Running":false,"State":"Stopped"},{"Source":"local","Name":"sequoia-xcode","Disk":80,"Size":34,"Running":false,"State":"Stopped"}]'

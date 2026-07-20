@@ -7,9 +7,14 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   signed-release:
     runs-on: macos-15
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -23,12 +28,20 @@ jobs:
           brew install cirruslabs/cli/tart
           make compat
 
+      - name: Test
+        run: make check
+
       - name: Import Developer ID certificate
         env:
           CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          DEVELOPER_ID_APPLICATION: ${{ secrets.DEVELOPER_ID_APPLICATION }}
         run: |
+          : "${CERTIFICATE_BASE64:?missing DEVELOPER_ID_CERTIFICATE_BASE64}"
+          : "${CERTIFICATE_PASSWORD:?missing DEVELOPER_ID_CERTIFICATE_PASSWORD}"
+          : "${KEYCHAIN_PASSWORD:?missing KEYCHAIN_PASSWORD}"
+          : "${DEVELOPER_ID_APPLICATION:?missing DEVELOPER_ID_APPLICATION}"
           CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
           KEYCHAIN_PATH="$RUNNER_TEMP/tartr-signing.keychain-db"
           echo -n "$CERTIFICATE_BASE64" | /usr/bin/base64 --decode > "$CERTIFICATE_PATH"
@@ -39,9 +52,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security default-keychain -s "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH"
-
-      - name: Test
-        run: make check
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -F "$DEVELOPER_ID_APPLICATION"
 
       - name: Build signed universal app
         env:
@@ -54,6 +65,9 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
+          : "${APPLE_ID:?missing APPLE_ID}"
+          : "${APPLE_TEAM_ID:?missing APPLE_TEAM_ID}"
+          : "${APPLE_APP_PASSWORD:?missing APPLE_APP_PASSWORD}"
           xcrun notarytool store-credentials TartR-notary \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \

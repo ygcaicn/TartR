@@ -1,6 +1,7 @@
 import Foundation
 
 public enum TartCommand: Equatable, Sendable {
+  case version
   case listLocalJSON
   case run(name: String, options: VMRunOptions)
   case stop(name: String, timeout: Int)
@@ -20,6 +21,8 @@ public enum TartCommand: Equatable, Sendable {
 
   public var arguments: [String] {
     switch self {
+    case .version:
+      return ["--version"]
     case .listLocalJSON:
       return ["list", "--source", "local", "--format", "json"]
     case .run(let name, let options):

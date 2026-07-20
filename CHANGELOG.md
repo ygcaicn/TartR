@@ -2,6 +2,23 @@
 
 All notable changes to TartR are documented here.
 
+## 4.5.0 - 2026-07-20
+
+### Added
+
+- 将全部 VM 名称、自动启动和运行选项导出为版本化 JSON 设置文件，并支持安全导入
+- 应用内显示 TartR、macOS、CPU 架构、Tart 版本、可执行文件路径和同步状态
+- VM 配置详情改用可选择、可滚动、可一键复制的文本查看器
+- 设置导入具备格式版本、重复 ID、重复名称、非法名称和 5 MB 大小限制校验
+
+### Fixed
+
+- 有 TartR 管理的 VM 或长任务运行时禁止替换设置，避免丢失进程控制关系
+- 公证脚本在上传前强制检查 Developer ID Application、时间戳和 Hardened Runtime
+- 公证完成后额外执行 Gatekeeper 评估，失败的包不会继续发布
+- CI/Release 增加并发控制、执行超时、签名身份匹配及缺失凭据预检
+- 公证在无扩展属性的隔离副本上进行，避免 Finder 或云盘元数据污染签名验证
+
 ## 4.4.0 - 2026-07-20
 
 ### Added

@@ -154,6 +154,50 @@ public enum VMConfigurationRecovery {
   }
 }
 
+public struct TartRSettingsDocument: Codable, Equatable, Sendable {
+  public static let currentSchemaVersion = 1
+
+  public let schemaVersion: Int
+  public let exportedByVersion: String
+  public let configurations: [VMConfiguration]
+
+  public init(
+    schemaVersion: Int = TartRSettingsDocument.currentSchemaVersion,
+    exportedByVersion: String,
+    configurations: [VMConfiguration]
+  ) {
+    self.schemaVersion = schemaVersion
+    self.exportedByVersion = exportedByVersion
+    self.configurations = configurations
+  }
+}
+
+public enum TartRSettingsValidation: Equatable, Sendable {
+  case valid
+  case unsupportedSchema(Int)
+  case duplicateID
+  case duplicateName
+  case invalidName
+
+  public static func validate(_ document: TartRSettingsDocument) -> TartRSettingsValidation {
+    guard document.schemaVersion == TartRSettingsDocument.currentSchemaVersion else {
+      return .unsupportedSchema(document.schemaVersion)
+    }
+    guard Set(document.configurations.map(\.id)).count == document.configurations.count else {
+      return .duplicateID
+    }
+    var normalizedNames: Set<String> = []
+    for configuration in document.configurations {
+      let name = configuration.name.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !name.isEmpty, name == configuration.name, !name.contains("/") else {
+        return .invalidName
+      }
+      guard normalizedNames.insert(name.lowercased()).inserted else { return .duplicateName }
+    }
+    return .valid
+  }
+}
+
 public enum VMState: Equatable, Sendable {
   case unknown
   case missing

@@ -574,7 +574,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       {
         details = pretty
       }
-      self.showAlert(title: configuration.name, message: details)
+      self.showTextViewer(
+        title: configuration.name,
+        text: details.isEmpty ? "Tart 未返回配置内容。" : details)
     }
   }
 
@@ -900,6 +902,106 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     }
   }
 
+  @objc private func exportSettings() {
+    let version =
+      Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+      ?? "unknown"
+    let document = TartRSettingsDocument(
+      exportedByVersion: version, configurations: configurations)
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    guard let data = try? encoder.encode(document) else {
+      showAlert(title: "无法导出设置", message: "虚拟机设置无法编码。")
+      return
+    }
+
+    let panel = NSSavePanel()
+    panel.title = "导出 TartR 设置"
+    panel.message = "设置文件包含 VM 名称和启动选项，但不包含日志或 Registry 凭据。"
+    panel.allowedContentTypes = [.json]
+    panel.canCreateDirectories = true
+    panel.nameFieldStringValue = "TartR-Settings.json"
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    do {
+      try data.write(to: url, options: .atomic)
+      NSWorkspace.shared.activateFileViewerSelecting([url])
+    } catch {
+      showAlert(title: "无法导出设置", message: error.localizedDescription)
+    }
+  }
+
+  @objc private func importSettings() {
+    guard operationProcess == nil, !runtimes.values.contains(where: { $0.process.isRunning }) else {
+      showAlert(title: "暂时无法导入设置", message: "请先等待任务结束并停止所有由 TartR 启动的虚拟机。")
+      return
+    }
+    let panel = NSOpenPanel()
+    panel.title = "导入 TartR 设置"
+    panel.message = "选择由 TartR 导出的 JSON 设置文件。"
+    panel.allowedContentTypes = [.json]
+    panel.allowsMultipleSelection = false
+    panel.canChooseDirectories = false
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    guard let data = try? Data(contentsOf: url), data.count <= 5 * 1024 * 1024,
+      let document = try? JSONDecoder().decode(TartRSettingsDocument.self, from: data)
+    else {
+      showAlert(title: "设置文件无效", message: "文件无法读取、超过 5 MB，或不是有效的 TartR 设置。")
+      return
+    }
+    switch TartRSettingsValidation.validate(document) {
+    case .valid:
+      break
+    case .unsupportedSchema(let version):
+      showAlert(title: "设置版本不受支持", message: "文件使用设置格式版本 \(version)，当前 TartR 无法导入。")
+      return
+    case .duplicateID, .duplicateName:
+      showAlert(title: "设置文件有冲突", message: "文件包含重复的 VM 标识或名称。")
+      return
+    case .invalidName:
+      showAlert(title: "设置文件有无效名称", message: "VM 名称不能为空、包含 / 或带有前后空白。")
+      return
+    }
+
+    let confirmation = NSAlert()
+    confirmation.alertStyle = .warning
+    confirmation.messageText = "导入 \(document.configurations.count) 台 VM 的设置？"
+    confirmation.informativeText =
+      "将替换当前保存的 \(configurations.count) 条设置。TartR 会自动保留当前有效配置作为备份，并重新发现本地 VM。"
+    confirmation.addButton(withTitle: "导入并替换")
+    confirmation.addButton(withTitle: "取消")
+    guard confirmation.runModal() == .alertFirstButtonReturn else { return }
+
+    configurations = document.configurations
+    states = Dictionary(uniqueKeysWithValues: configurations.map { ($0.id, VMState.unknown) })
+    searchField.stringValue = ""
+    lastTableSignature = nil
+    UserDefaults.standard.removeObject(forKey: selectedVMKey)
+    saveConfigurations()
+    refreshUI(forceTableReload: true)
+    restoreSelection()
+    syncTartState()
+  }
+
+  @objc private func showEnvironmentInfo() {
+    if !tartInstalled {
+      showTextViewer(title: "运行环境", text: environmentReport(tartVersion: "未安装"))
+      return
+    }
+    runManagedTartCommand(
+      TartCommand.version.arguments,
+      title: "正在读取 Tart 版本…",
+      showsSuccessAlert: false,
+      showsFailureAlert: false
+    ) { [weak self] success, output in
+      guard let self else { return }
+      let value = output.trimmingCharacters(in: .whitespacesAndNewlines)
+      self.showTextViewer(
+        title: "运行环境",
+        text: self.environmentReport(
+          tartVersion: success && !value.isEmpty ? value : "无法读取"))
+    }
+  }
+
   @objc private func quitApp() {
     NSApp.terminate(nil)
   }
@@ -1166,6 +1268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   private func runManagedTartCommand(
     _ arguments: [String], title: String,
     showsSuccessAlert: Bool = true,
+    showsFailureAlert: Bool = true,
     completion: @escaping (Bool, String) -> Void
   ) {
     guard operationProcess == nil else {
@@ -1222,7 +1325,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             self.showAlert(
               title: "操作完成", message: title.replacingOccurrences(of: "正在", with: "已"))
           }
-        } else {
+        } else if showsFailureAlert {
           let details = output.trimmingCharacters(in: .whitespacesAndNewlines)
           let fallback =
             process.terminationReason == .uncaughtSignal
@@ -1481,6 +1584,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       """
   }
 
+  private func environmentReport(tartVersion: String) -> String {
+    let version =
+      Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+      ?? "unknown"
+    let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+    #if arch(arm64)
+      let architecture = "arm64"
+    #elseif arch(x86_64)
+      let architecture = "x86_64"
+    #else
+      let architecture = "unknown"
+    #endif
+    return """
+      TartR: \(version) (\(build))
+      Bundle ID: \(Bundle.main.bundleIdentifier ?? "unknown")
+      macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)
+      Architecture: \(architecture)
+      Tart: \(tartVersion)
+      Tart executable: \(TartExecutableLocator.locate()?.path ?? "登录 shell PATH")
+      State synchronization: \(tartSyncError == nil ? "正常" : "异常")
+      """
+  }
+
   private func loadConfigurations() {
     let defaults = UserDefaults.standard
     let current = defaults.data(forKey: defaultsKey)
@@ -1624,6 +1750,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     alert.informativeText = message
     alert.addButton(withTitle: "好")
     alert.runModal()
+  }
+
+  private func showTextViewer(title: String, text: String) {
+    showWindow()
+    let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 560, height: 300))
+    textView.string = text
+    textView.isEditable = false
+    textView.isSelectable = true
+    textView.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    textView.textContainerInset = NSSize(width: 8, height: 8)
+    textView.minSize = NSSize(width: 0, height: 300)
+    textView.maxSize = NSSize(
+      width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+    textView.isVerticallyResizable = true
+    textView.isHorizontallyResizable = false
+    textView.autoresizingMask = [.width]
+    textView.textContainer?.containerSize = NSSize(
+      width: 560, height: CGFloat.greatestFiniteMagnitude)
+    textView.textContainer?.widthTracksTextView = true
+    let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 560, height: 300))
+    scrollView.documentView = textView
+    scrollView.hasVerticalScroller = true
+    scrollView.hasHorizontalScroller = false
+    scrollView.borderType = .bezelBorder
+
+    let alert = NSAlert()
+    alert.messageText = title
+    alert.accessoryView = scrollView
+    alert.addButton(withTitle: "关闭")
+    alert.addButton(withTitle: "复制")
+    if alert.runModal() == .alertSecondButtonReturn {
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(text, forType: .string)
+    }
   }
 
   private func reusableTextCell(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
@@ -1857,10 +2017,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       title: "打开 TartR 日志", action: #selector(openApplicationLog), keyEquivalent: "")
     appLog.target = self
     appMenu.addItem(appLog)
+    let environment = NSMenuItem(
+      title: "运行环境…", action: #selector(showEnvironmentInfo), keyEquivalent: "")
+    environment.target = self
+    appMenu.addItem(environment)
     let diagnostics = NSMenuItem(
       title: "导出诊断信息…", action: #selector(exportDiagnostics), keyEquivalent: "")
     diagnostics.target = self
     appMenu.addItem(diagnostics)
+    let exportSettingsItem = NSMenuItem(
+      title: "导出 TartR 设置…", action: #selector(exportSettings), keyEquivalent: "")
+    exportSettingsItem.target = self
+    appMenu.addItem(exportSettingsItem)
+    let importSettingsItem = NSMenuItem(
+      title: "导入 TartR 设置…", action: #selector(importSettings), keyEquivalent: "")
+    importSettingsItem.target = self
+    appMenu.addItem(importSettingsItem)
     let refresh = NSMenuItem(title: "刷新状态", action: #selector(refreshNow), keyEquivalent: "r")
     refresh.target = self
     appMenu.addItem(refresh)

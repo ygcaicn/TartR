@@ -66,6 +66,7 @@ final class TartRCoreTests: XCTestCase {
   }
 
   func testCommandArgumentsAreNotShellInterpolated() {
+    XCTAssertEqual(TartCommand.version.arguments, ["--version"])
     XCTAssertEqual(
       TartCommand.run(name: "vm name", options: VMRunOptions()).arguments, ["run", "vm name"])
     XCTAssertEqual(
@@ -231,5 +232,51 @@ final class TartRCoreTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: oldOwned.path))
     XCTAssertTrue(FileManager.default.fileExists(atPath: newOwned.path))
     XCTAssertTrue(FileManager.default.fileExists(atPath: unrelated.path))
+  }
+
+  func testSettingsDocumentRoundTripAndValidation() throws {
+    let document = TartRSettingsDocument(
+      exportedByVersion: "4.5.0",
+      configurations: [
+        VMConfiguration(
+          name: "worker", autoStart: true,
+          runOptions: VMRunOptions(headless: true, noClipboard: true))
+      ])
+    let decoded = try JSONDecoder().decode(
+      TartRSettingsDocument.self, from: JSONEncoder().encode(document))
+    XCTAssertEqual(decoded, document)
+    XCTAssertEqual(TartRSettingsValidation.validate(decoded), .valid)
+  }
+
+  func testSettingsDocumentRejectsUnsupportedAndAmbiguousData() {
+    XCTAssertEqual(
+      TartRSettingsValidation.validate(
+        TartRSettingsDocument(schemaVersion: 99, exportedByVersion: "future", configurations: [])),
+      .unsupportedSchema(99))
+    XCTAssertEqual(
+      TartRSettingsValidation.validate(
+        TartRSettingsDocument(
+          exportedByVersion: "test",
+          configurations: [VMConfiguration(name: "VM"), VMConfiguration(name: "vm")])),
+      .duplicateName)
+    let id = UUID()
+    XCTAssertEqual(
+      TartRSettingsValidation.validate(
+        TartRSettingsDocument(
+          exportedByVersion: "test",
+          configurations: [
+            VMConfiguration(id: id, name: "one"), VMConfiguration(id: id, name: "two"),
+          ])),
+      .duplicateID)
+    XCTAssertEqual(
+      TartRSettingsValidation.validate(
+        TartRSettingsDocument(
+          exportedByVersion: "test", configurations: [VMConfiguration(name: "bad/name")])),
+      .invalidName)
+    XCTAssertEqual(
+      TartRSettingsValidation.validate(
+        TartRSettingsDocument(
+          exportedByVersion: "test", configurations: [VMConfiguration(name: " padded ")])),
+      .invalidName)
   }
 }

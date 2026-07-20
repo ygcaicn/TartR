@@ -30,15 +30,127 @@ public struct TartVMInfo: Codable, Equatable, Sendable {
   }
 }
 
+public struct VMRunOptions: Codable, Equatable, Sendable {
+  public var headless: Bool
+  public var noAudio: Bool
+  public var noClipboard: Bool
+  public var suspendable: Bool
+
+  public init(
+    headless: Bool = false,
+    noAudio: Bool = false,
+    noClipboard: Bool = false,
+    suspendable: Bool = false
+  ) {
+    self.headless = headless
+    self.noAudio = noAudio
+    self.noClipboard = noClipboard
+    self.suspendable = suspendable
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case headless
+    case noAudio
+    case noClipboard
+    case suspendable
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    headless = try container.decodeIfPresent(Bool.self, forKey: .headless) ?? false
+    noAudio = try container.decodeIfPresent(Bool.self, forKey: .noAudio) ?? false
+    noClipboard = try container.decodeIfPresent(Bool.self, forKey: .noClipboard) ?? false
+    suspendable = try container.decodeIfPresent(Bool.self, forKey: .suspendable) ?? false
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(headless, forKey: .headless)
+    try container.encode(noAudio, forKey: .noAudio)
+    try container.encode(noClipboard, forKey: .noClipboard)
+    try container.encode(suspendable, forKey: .suspendable)
+  }
+}
+
 public struct VMConfiguration: Codable, Equatable, Sendable {
   public let id: UUID
   public var name: String
   public var autoStart: Bool
+  public var runOptions: VMRunOptions
 
-  public init(id: UUID = UUID(), name: String, autoStart: Bool = false) {
+  public init(
+    id: UUID = UUID(),
+    name: String,
+    autoStart: Bool = false,
+    runOptions: VMRunOptions = VMRunOptions()
+  ) {
     self.id = id
     self.name = name
     self.autoStart = autoStart
+    self.runOptions = runOptions
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case name
+    case autoStart
+    case runOptions
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(UUID.self, forKey: .id)
+    name = try container.decode(String.self, forKey: .name)
+    autoStart = try container.decodeIfPresent(Bool.self, forKey: .autoStart) ?? false
+    runOptions =
+      try container.decodeIfPresent(VMRunOptions.self, forKey: .runOptions) ?? VMRunOptions()
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(id, forKey: .id)
+    try container.encode(name, forKey: .name)
+    try container.encode(autoStart, forKey: .autoStart)
+    try container.encode(runOptions, forKey: .runOptions)
+  }
+}
+
+public enum VMConfigurationRecoverySource: Equatable, Sendable {
+  case current
+  case backup
+  case legacy
+  case empty
+}
+
+public struct VMConfigurationRecoveryResult: Equatable, Sendable {
+  public let configurations: [VMConfiguration]
+  public let source: VMConfigurationRecoverySource
+
+  public init(configurations: [VMConfiguration], source: VMConfigurationRecoverySource) {
+    self.configurations = configurations
+    self.source = source
+  }
+}
+
+public enum VMConfigurationRecovery {
+  public static func resolve(
+    current: Data?,
+    backup: Data?,
+    legacy: [Data]
+  ) -> VMConfigurationRecoveryResult {
+    let decoder = JSONDecoder()
+    if let current, let decoded = try? decoder.decode([VMConfiguration].self, from: current) {
+      return VMConfigurationRecoveryResult(configurations: decoded, source: .current)
+    }
+    if let backup, let decoded = try? decoder.decode([VMConfiguration].self, from: backup) {
+      return VMConfigurationRecoveryResult(configurations: decoded, source: .backup)
+    }
+    for data in legacy {
+      if let decoded = try? decoder.decode([VMConfiguration].self, from: data) {
+        return VMConfigurationRecoveryResult(configurations: decoded, source: .legacy)
+      }
+    }
+    return VMConfigurationRecoveryResult(configurations: [], source: .empty)
   }
 }
 
@@ -93,6 +205,32 @@ public enum VMNameValidation: Equatable, Sendable {
     if existingNames.contains(where: { $0.caseInsensitiveCompare(normalized) == .orderedSame }) {
       return .duplicate
     }
+    return .valid
+  }
+}
+
+public enum VMResourceValidation: Equatable, Sendable {
+  case valid
+  case invalidCPU
+  case invalidMemory
+  case invalidDisplay
+  case invalidDiskSize
+
+  public static func validate(
+    cpu: String,
+    memory: String,
+    display: String,
+    diskSize: String
+  ) -> VMResourceValidation {
+    if !cpu.isEmpty, UInt16(cpu).map({ $0 > 0 }) != true { return .invalidCPU }
+    if !memory.isEmpty, UInt64(memory).map({ $0 > 0 }) != true { return .invalidMemory }
+    if !display.isEmpty,
+      display.range(of: #"^[1-9][0-9]*x[1-9][0-9]*(pt|px)?$"#, options: .regularExpression)
+        == nil
+    {
+      return .invalidDisplay
+    }
+    if !diskSize.isEmpty, UInt16(diskSize).map({ $0 > 0 }) != true { return .invalidDiskSize }
     return .valid
   }
 }

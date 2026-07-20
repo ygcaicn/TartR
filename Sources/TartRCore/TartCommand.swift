@@ -2,7 +2,7 @@ import Foundation
 
 public enum TartCommand: Equatable, Sendable {
   case listLocalJSON
-  case run(name: String, suspendable: Bool)
+  case run(name: String, options: VMRunOptions)
   case stop(name: String, timeout: Int)
   case clone(source: String, name: String)
   case rename(name: String, newName: String)
@@ -22,8 +22,14 @@ public enum TartCommand: Equatable, Sendable {
     switch self {
     case .listLocalJSON:
       return ["list", "--source", "local", "--format", "json"]
-    case .run(let name, let suspendable):
-      return ["run"] + (suspendable ? ["--suspendable"] : []) + [name]
+    case .run(let name, let options):
+      var result = ["run"]
+      if options.headless { result.append("--no-graphics") }
+      if options.noAudio { result.append("--no-audio") }
+      if options.noClipboard { result.append("--no-clipboard") }
+      if options.suspendable { result.append("--suspendable") }
+      result.append(name)
+      return result
     case .stop(let name, let timeout):
       return ["stop", name, "--timeout", String(timeout)]
     case .clone(let source, let name):

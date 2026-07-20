@@ -17,6 +17,10 @@ jobs:
         run: swift format lint --strict --recursive Sources Tests Package.swift
       - name: Unit tests
         run: swift test
+      - name: Install current Tart CLI
+        run: brew install cirruslabs/cli/tart
+      - name: Verify Tart CLI compatibility
+        run: make compat
       - name: Build universal release
         run: Scripts/build-app.sh
       - name: Verify release

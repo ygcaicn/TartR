@@ -46,11 +46,35 @@ final class TartRCoreTests: XCTestCase {
     XCTAssertEqual(VMNameValidation.validate("new-vm", existingNames: ["vm"]), .valid)
   }
 
+  func testVMResourceValidation() {
+    XCTAssertEqual(
+      VMResourceValidation.validate(
+        cpu: "4", memory: "8192", display: "1920x1080px", diskSize: "80"),
+      .valid)
+    XCTAssertEqual(
+      VMResourceValidation.validate(cpu: "0", memory: "", display: "", diskSize: ""),
+      .invalidCPU)
+    XCTAssertEqual(
+      VMResourceValidation.validate(cpu: "", memory: "eight", display: "", diskSize: ""),
+      .invalidMemory)
+    XCTAssertEqual(
+      VMResourceValidation.validate(cpu: "", memory: "", display: "1920*1080", diskSize: ""),
+      .invalidDisplay)
+    XCTAssertEqual(
+      VMResourceValidation.validate(cpu: "", memory: "", display: "", diskSize: "-1"),
+      .invalidDiskSize)
+  }
+
   func testCommandArgumentsAreNotShellInterpolated() {
     XCTAssertEqual(
-      TartCommand.run(name: "vm name", suspendable: false).arguments, ["run", "vm name"])
+      TartCommand.run(name: "vm name", options: VMRunOptions()).arguments, ["run", "vm name"])
     XCTAssertEqual(
-      TartCommand.run(name: "vm", suspendable: true).arguments, ["run", "--suspendable", "vm"])
+      TartCommand.run(
+        name: "vm",
+        options: VMRunOptions(
+          headless: true, noAudio: true, noClipboard: true, suspendable: true)
+      ).arguments,
+      ["run", "--no-graphics", "--no-audio", "--no-clipboard", "--suspendable", "vm"])
     XCTAssertEqual(
       TartCommand.stop(name: "vm", timeout: 8).arguments, ["stop", "vm", "--timeout", "8"])
     XCTAssertEqual(
@@ -136,5 +160,76 @@ final class TartRCoreTests: XCTestCase {
     try process.run()
     XCTAssertFalse(ProcessDeadline.waitForExit(process, timeout: 0.05, cancellationGrace: 0.1))
     XCTAssertFalse(process.isRunning)
+  }
+
+  func testLegacyVMConfigurationDecodesWithDefaultRunOptions() throws {
+    let id = UUID()
+    let data = #"[{"id":"\#(id.uuidString)","name":"legacy-vm","autoStart":true}]"#
+      .data(using: .utf8)!
+    let decoded = try JSONDecoder().decode([VMConfiguration].self, from: data)
+    XCTAssertEqual(decoded.first?.name, "legacy-vm")
+    XCTAssertEqual(decoded.first?.autoStart, true)
+    XCTAssertEqual(decoded.first?.runOptions, VMRunOptions())
+  }
+
+  func testPartialRunOptionsDecodeWithForwardCompatibleDefaults() throws {
+    let id = UUID()
+    let data =
+      #"[{"id":"\#(id.uuidString)","name":"worker","runOptions":{"headless":true}}]"#
+      .data(using: .utf8)!
+    let decoded = try JSONDecoder().decode([VMConfiguration].self, from: data)
+    XCTAssertEqual(decoded.first?.runOptions, VMRunOptions(headless: true))
+  }
+
+  func testVMConfigurationRecoveryFallsBackWithoutLosingBackup() throws {
+    let expected = [
+      VMConfiguration(
+        name: "worker", autoStart: true,
+        runOptions: VMRunOptions(headless: true, noAudio: true))
+    ]
+    let backup = try JSONEncoder().encode(expected)
+    let result = VMConfigurationRecovery.resolve(
+      current: Data("not-json".utf8), backup: backup, legacy: [])
+    XCTAssertEqual(result.source, .backup)
+    XCTAssertEqual(result.configurations, expected)
+  }
+
+  func testVMConfigurationRecoveryUsesLegacyThenEmpty() throws {
+    let legacy = try JSONEncoder().encode([VMConfiguration(name: "legacy")])
+    XCTAssertEqual(
+      VMConfigurationRecovery.resolve(current: nil, backup: nil, legacy: [legacy]).source,
+      .legacy)
+    XCTAssertEqual(
+      VMConfigurationRecovery.resolve(
+        current: Data("bad".utf8), backup: Data("bad".utf8), legacy: [Data("bad".utf8)]
+      ).source,
+      .empty)
+  }
+
+  func testTemporaryFileCleanupOnlyRemovesOwnedStaleFiles() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("tartr-cleanup-test-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let oldOwned = directory.appendingPathComponent("tartr-command-old.log")
+    let newOwned = directory.appendingPathComponent("tartr-command-new.log")
+    let unrelated = directory.appendingPathComponent("other-old.log")
+    for url in [oldOwned, newOwned, unrelated] {
+      XCTAssertTrue(FileManager.default.createFile(atPath: url.path, contents: Data()))
+    }
+    let now = Date()
+    try FileManager.default.setAttributes(
+      [.modificationDate: now.addingTimeInterval(-48 * 60 * 60)],
+      ofItemAtPath: oldOwned.path)
+    try FileManager.default.setAttributes(
+      [.modificationDate: now.addingTimeInterval(-48 * 60 * 60)],
+      ofItemAtPath: unrelated.path)
+
+    let removed = TemporaryFileCleanup.removeStaleFiles(
+      in: directory, namePrefix: "tartr-command-", olderThan: 24 * 60 * 60, now: now)
+    XCTAssertEqual(removed.map(\.lastPathComponent), ["tartr-command-old.log"])
+    XCTAssertFalse(FileManager.default.fileExists(atPath: oldOwned.path))
+    XCTAssertTrue(FileManager.default.fileExists(atPath: newOwned.path))
+    XCTAssertTrue(FileManager.default.fileExists(atPath: unrelated.path))
   }
 }

@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 
 private let appTitle = "TartR"
 private let defaultsKey = "vmConfigurations.v2"
+private let defaultsBackupKey = "vmConfigurations.v2.backup"
+private let defaultsCorruptKey = "vmConfigurations.v2.corruptBackup"
 private let selectedVMKey = "selectedVM.v2"
 private let legacyAppIDs = [
   "local.caiyagang.tartr",
@@ -73,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   private var operationWasCancelled = false
   private var lastTableSignature: String?
   private var isQuitting = false
+  private var configurationRecoveryNotice: String?
 
   private lazy var logsDirectory: URL = {
     let url = FileManager.default.homeDirectoryForCurrentUser
@@ -85,6 +88,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.regular)
+    TemporaryFileCleanup.removeStaleFiles(
+      in: FileManager.default.temporaryDirectory,
+      namePrefix: "tartr-command-",
+      olderThan: 24 * 60 * 60)
     loadConfigurations()
     buildMenu()
     buildWindow()
@@ -93,6 +100,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     refreshUI()
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
+    if let configurationRecoveryNotice {
+      DispatchQueue.main.async { [weak self] in
+        self?.showAlert(title: "虚拟机列表已恢复", message: configurationRecoveryNotice)
+      }
+    }
     syncTartState { [weak self] in
       guard let self else { return }
       for configuration in self.configurations where configuration.autoStart {
@@ -453,11 +465,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       "调整配置…", #selector(configureSelectedVM), to: menu,
       enabled: selectedConfiguration != nil && !state.isRunning)
     addMenuItem(
+      "启动选项…", #selector(configureSelectedVMRunOptions), to: menu,
+      enabled: selectedConfiguration != nil)
+    addMenuItem(
       "推送到 OCI Registry…", #selector(pushSelectedVM), to: menu,
       enabled: selectedConfiguration != nil && !state.isRunning)
-    addMenuItem(
-      "以可挂起模式启动", #selector(startSelectedVMSuspendable), to: menu,
-      enabled: selectedConfiguration != nil && !state.isRunning)
+    #if arch(arm64)
+      addMenuItem(
+        "以可挂起模式启动一次", #selector(startSelectedVMSuspendable), to: menu,
+        enabled: selectedConfiguration != nil && !state.isRunning)
+    #endif
     menu.addItem(.separator())
     addMenuItem("复制 IP 地址", #selector(copySelectedIP), to: menu, enabled: state.isRunning)
     addMenuItem("挂起虚拟机", #selector(suspendSelectedVM), to: menu, enabled: state.isRunning)
@@ -598,6 +615,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       )
     else { return }
 
+    switch VMResourceValidation.validate(
+      cpu: values[0], memory: values[1], display: values[2], diskSize: values[3])
+    {
+    case .valid:
+      break
+    case .invalidCPU:
+      showAlert(title: "CPU 配置无效", message: "CPU 核数必须是 1 至 65535 之间的整数。")
+      return
+    case .invalidMemory:
+      showAlert(title: "内存配置无效", message: "内存必须是以 MB 为单位的正整数。")
+      return
+    case .invalidDisplay:
+      showAlert(title: "显示配置无效", message: "请输入 WIDTHxHEIGHT、WIDTHxHEIGHTpt 或 WIDTHxHEIGHTpx。")
+      return
+    case .invalidDiskSize:
+      showAlert(title: "磁盘配置无效", message: "磁盘大小必须是 1 至 65535 之间的整数 GB。")
+      return
+    }
+
     let arguments = TartCommand.set(
       name: configuration.name,
       cpu: values[0].isEmpty ? nil : values[0],
@@ -609,6 +645,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     runManagedTartCommand(arguments, title: "正在更新虚拟机配置…") { [weak self] success, _ in
       if success { self?.syncTartState() }
     }
+  }
+
+  @objc private func configureSelectedVMRunOptions() {
+    guard let configuration = selectedConfiguration else { return }
+    let options = configuration.runOptions
+    let headless = NSButton(
+      checkboxWithTitle: "无图形界面（--no-graphics）", target: nil, action: nil)
+    headless.state = options.headless ? .on : .off
+    let noAudio = NSButton(
+      checkboxWithTitle: "禁用音频直通（--no-audio）", target: nil, action: nil)
+    noAudio.state = options.noAudio ? .on : .off
+    let noClipboard = NSButton(
+      checkboxWithTitle: "禁用主机与虚拟机剪贴板共享（--no-clipboard）", target: nil, action: nil)
+    noClipboard.state = options.noClipboard ? .on : .off
+    let suspendable = NSButton(
+      checkboxWithTitle: "使用可挂起模式（--suspendable）", target: nil, action: nil)
+    #if arch(arm64)
+      suspendable.state = options.suspendable ? .on : .off
+    #else
+      suspendable.state = .off
+      suspendable.isEnabled = false
+      suspendable.toolTip = "可挂起模式仅适用于 Apple Silicon"
+    #endif
+
+    let stack = NSStackView(views: [headless, noAudio, noClipboard, suspendable])
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.spacing = 8
+    stack.frame = NSRect(x: 0, y: 0, width: 410, height: 112)
+    let alert = NSAlert()
+    alert.messageText = "\(configuration.name) 的启动选项"
+    alert.informativeText = "这些选项会用于“启动”、双击启动和打开 TartR 时自动启动。"
+    alert.accessoryView = stack
+    alert.addButton(withTitle: "保存")
+    alert.addButton(withTitle: "取消")
+    guard alert.runModal() == .alertFirstButtonReturn,
+      let index = configurations.firstIndex(where: { $0.id == configuration.id })
+    else { return }
+    #if arch(arm64)
+      let usesSuspendableMode = suspendable.state == .on
+    #else
+      let usesSuspendableMode = false
+    #endif
+    configurations[index].runOptions = VMRunOptions(
+      headless: headless.state == .on,
+      noAudio: noAudio.state == .on,
+      noClipboard: noClipboard.state == .on,
+      suspendable: usesSuspendableMode)
+    saveConfigurations()
   }
 
   @objc private func pushSelectedVM() {
@@ -727,8 +812,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         fields: [("虚拟机名称", defaultName, true), ("磁盘大小（GB）", "50", true)]
       )
     else { return }
-    guard validNewVMName(values[0]), Int(values[1]) != nil else {
-      showAlert(title: "输入无效", message: "请填写有效名称和磁盘大小。")
+    guard validNewVMName(values[0]) else { return }
+    guard
+      VMResourceValidation.validate(cpu: "", memory: "", display: "", diskSize: values[1])
+        == .valid
+    else {
+      showAlert(title: "磁盘大小无效", message: "请输入 1 至 65535 GB 之间的整数。")
       return
     }
     let arguments =
@@ -815,7 +904,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     NSApp.terminate(nil)
   }
 
-  private func startVM(id: UUID, verifyFirst: Bool, suspendable: Bool = false) {
+  private func startVM(id: UUID, verifyFirst: Bool, suspendable: Bool? = nil) {
     guard let configuration = configurations.first(where: { $0.id == id }) else { return }
     guard runtimes[id]?.process.isRunning != true else { return }
     guard states[id]?.isRunning != true else { return }
@@ -847,16 +936,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       openedHandle = handle
       try handle.seekToEnd()
       let stamp = ISO8601DateFormatter().string(from: Date())
-      let displayedCommand =
-        suspendable
-        ? "tart run --suspendable \(configuration.name)"
-        : "tart run \(configuration.name)"
+      var runOptions = configuration.runOptions
+      if let suspendable { runOptions.suspendable = suspendable }
+      #if arch(x86_64)
+        runOptions.suspendable = false
+      #endif
+      let runArguments = TartCommand.run(name: configuration.name, options: runOptions).arguments
+      let displayedCommand = "tart \(runArguments.joined(separator: " "))"
       handle.write(Data("\n[\(stamp)] Starting: \(displayedCommand)\n".utf8))
 
       let process = Process()
       configureTartProcess(
         process,
-        arguments: TartCommand.run(name: configuration.name, suspendable: suspendable).arguments)
+        arguments: runArguments)
       process.standardOutput = handle
       process.standardError = handle
       process.terminationHandler = { [weak self] finished in
@@ -1380,42 +1472,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       Tart status: \(tartStatus)
       Saved/local VMs: \(configurations.count)/\(discoveredNames.count)
       Running/suspended/missing: \(runningCount)/\(suspendedCount)/\(missingCount)
+      Headless/suspendable profiles: \(configurations.filter { $0.runOptions.headless }.count)/\(configurations.filter { $0.runOptions.suspendable }.count)
       TartR-owned running processes: \(runtimes.values.filter { $0.process.isRunning }.count)
       Managed operation active: \(operationProcess?.isRunning == true ? "yes" : "no")
+      Configuration recovery performed: \(configurationRecoveryNotice == nil ? "no" : "yes")
 
       Privacy: VM names, command output, logs, and registry credentials are intentionally omitted.
       """
   }
 
   private func loadConfigurations() {
-    if let data = UserDefaults.standard.data(forKey: defaultsKey),
-      let decoded = try? JSONDecoder().decode([VMConfiguration].self, from: data)
-    {
-      configurations = decoded
-    } else if let data = legacyPreferenceData(forKey: defaultsKey),
-      let decoded = try? JSONDecoder().decode([VMConfiguration].self, from: data)
-    {
-      configurations = decoded
+    let defaults = UserDefaults.standard
+    let current = defaults.data(forKey: defaultsKey)
+    let result = VMConfigurationRecovery.resolve(
+      current: current,
+      backup: defaults.data(forKey: defaultsBackupKey),
+      legacy: legacyPreferenceDataValues(forKey: defaultsKey))
+    configurations = result.configurations
+    switch result.source {
+    case .current:
+      break
+    case .backup:
+      if let current { defaults.set(current, forKey: defaultsCorruptKey) }
+      configurationRecoveryNotice = "当前配置数据无法读取，TartR 已从最近一次有效备份恢复。损坏的原始数据已保留用于诊断。"
       saveConfigurations()
-    } else {
-      configurations = []
+    case .legacy:
+      saveConfigurations()
+    case .empty:
+      if let current {
+        defaults.set(current, forKey: defaultsCorruptKey)
+        configurationRecoveryNotice = "当前配置数据和备份均无法读取。TartR 已保留损坏数据并创建空白虚拟机列表；本地 VM 会在状态同步后重新发现。"
+      }
       saveConfigurations()
     }
-    if UserDefaults.standard.string(forKey: selectedVMKey) == nil,
+    if defaults.string(forKey: selectedVMKey) == nil,
       let legacySelection = legacyPreferenceString(forKey: selectedVMKey)
     {
-      UserDefaults.standard.set(legacySelection, forKey: selectedVMKey)
+      defaults.set(legacySelection, forKey: selectedVMKey)
     }
     for configuration in configurations { states[configuration.id] = .unknown }
   }
 
-  private func legacyPreferenceData(forKey key: String) -> Data? {
-    for appID in legacyAppIDs {
-      if let data = CFPreferencesCopyAppValue(key as CFString, appID as CFString) as? Data {
-        return data
-      }
+  private func legacyPreferenceDataValues(forKey key: String) -> [Data] {
+    legacyAppIDs.compactMap { appID in
+      CFPreferencesCopyAppValue(key as CFString, appID as CFString) as? Data
     }
-    return nil
   }
 
   private func legacyPreferenceString(forKey key: String) -> String? {
@@ -1428,9 +1529,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   private func saveConfigurations() {
-    if let data = try? JSONEncoder().encode(configurations) {
-      UserDefaults.standard.set(data, forKey: defaultsKey)
+    guard let data = try? JSONEncoder().encode(configurations) else { return }
+    let defaults = UserDefaults.standard
+    if let current = defaults.data(forKey: defaultsKey), current != data,
+      (try? JSONDecoder().decode([VMConfiguration].self, from: current)) != nil
+    {
+      defaults.set(current, forKey: defaultsBackupKey)
     }
+    defaults.set(data, forKey: defaultsKey)
   }
 
   private func restoreSelection() {

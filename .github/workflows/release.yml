@@ -18,6 +18,11 @@ jobs:
           VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)
           test "v$VERSION" = "$GITHUB_REF_NAME"
 
+      - name: Verify current Tart CLI compatibility
+        run: |
+          brew install cirruslabs/cli/tart
+          make compat
+
       - name: Import Developer ID certificate
         env:
           CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
@@ -77,4 +82,3 @@ jobs:
       - name: Remove temporary keychain
         if: always()
         run: security delete-keychain "$RUNNER_TEMP/tartr-signing.keychain-db" || true
-

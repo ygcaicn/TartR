@@ -16,9 +16,9 @@ An Apple Development certificate is not sufficient. The certificate must be a va
 
 1. Update `CFBundleShortVersionString` and `CFBundleVersion` in `Resources/Info.plist`.
 2. Add the release section to `CHANGELOG.md`.
-3. Run `make check`, `make build`, and `make verify` locally.
+3. Install the current Tart release, then run `make check`, `make compat`, `make build`, and `make verify` locally.
 4. Commit the release changes.
-5. Create and push an annotated tag matching the version exactly, for example `v4.3.0`.
+5. Create and push an annotated tag matching the version exactly, for example `v4.4.0`.
 6. The Release workflow imports the certificate into an ephemeral keychain, builds both architectures, signs with Hardened Runtime, notarizes, staples, verifies, and publishes binaries plus checksums and source.
 
 Never commit certificates, app-specific passwords, notary profiles, or exported keychains.

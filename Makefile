@@ -1,4 +1,4 @@
-.PHONY: test format check build verify source notarize clean
+.PHONY: test format check compat build verify source notarize clean
 
 test:
 	swift test
@@ -9,6 +9,9 @@ format:
 check:
 	swift format lint --strict --recursive Sources Tests Package.swift
 	swift test
+
+compat:
+	Scripts/verify-tart-cli.sh
 
 build:
 	Scripts/build-app.sh

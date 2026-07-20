@@ -15,6 +15,7 @@ All notable changes to TartR are documented here.
 - 保存自定义路径前执行可取消的 `tart --version` 探测，并在 5 秒后强制回收无响应进程
 - 拒绝无执行权限、版本输出无效或探测失败的文件，避免错误路径导致持续状态同步失败
 - Tart 不可用时，任务结束不会错误地重新启用“更多操作”按钮
+- App 签名和 ZIP 打包改在系统临时目录完成，避免 Documents 文件提供器写入 FinderInfo 导致构建偶发失败
 
 ## 4.8.0 - 2026-07-20
 

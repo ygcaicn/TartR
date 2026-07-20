@@ -37,7 +37,7 @@ private final class VMRuntime {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
-  NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate
+  NSMenuItemValidation, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate
 {
   private var window: NSWindow!
   private var tableView: NSTableView!
@@ -227,6 +227,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     return false
   }
 
+  func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+    switch menuItem.action {
+    case #selector(openSelectedLog):
+      return selectedConfiguration != nil
+    case #selector(refreshNow):
+      return !syncInProgress && !isQuitting
+    default:
+      return true
+    }
+  }
+
   func numberOfRows(in tableView: NSTableView) -> Int {
     visibleConfigurations.count
   }
@@ -296,7 +307,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     if let selected = selectedConfiguration {
       UserDefaults.standard.set(selected.id.uuidString, forKey: selectedVMKey)
     }
-    refreshControls()
+    refreshUI()
   }
 
   func tableView(
@@ -343,21 +354,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   @objc private func deleteSelectedVM() {
-    guard let row = selectedRow, let configuration = selectedConfiguration,
-      let configurationIndex = configurations.firstIndex(where: { $0.id == configuration.id })
-    else { return }
-    guard !discoveredNames.contains(configuration.name) else {
+    let selected = selectedConfigurations
+    let capabilities = selectionCapabilities
+    guard !selected.isEmpty else { return }
+    guard capabilities.canRemoveRecords else {
       showAlert(
-        title: "无法移除本地虚拟机", message: "这是 Tart 已创建的本地虚拟机。TartR 只移除手动保存但本地不存在的记录，不会直接删除虚拟机磁盘。")
+        title: "无法移除所选记录",
+        message: "只能移除本地不存在且未运行的保存记录；TartR 不会通过此按钮删除虚拟机磁盘。")
       return
     }
-    guard states[configuration.id]?.isRunning != true else {
-      showAlert(title: "请先停止虚拟机", message: "停止“\(configuration.name)”后才能从列表中删除。")
-      return
+    if selected.count > 1 {
+      let alert = NSAlert()
+      alert.alertStyle = .warning
+      alert.messageText = "移除 \(selected.count) 条虚拟机记录？"
+      alert.informativeText = "只会移除 TartR 保存的记录，不会删除任何虚拟机磁盘。"
+      alert.addButton(withTitle: "移除记录")
+      alert.addButton(withTitle: "取消")
+      guard alert.runModal() == .alertFirstButtonReturn else { return }
     }
 
-    configurations.remove(at: configurationIndex)
-    states.removeValue(forKey: configuration.id)
+    let row = selectedRow ?? 0
+    let selectedIDs = Set(selected.map(\.id))
+    configurations.removeAll { selectedIDs.contains($0.id) }
+    for id in selectedIDs { states.removeValue(forKey: id) }
     saveConfigurations()
     tableView.reloadData()
     if !visibleConfigurations.isEmpty {
@@ -368,13 +387,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   @objc private func startSelectedVM() {
-    guard let id = selectedConfiguration?.id else { return }
-    startVM(id: id, verifyFirst: true)
+    let ids = selectionCapabilities.startableIDs
+    for id in ids { startVM(id: id, verifyFirst: true) }
   }
 
   @objc private func stopSelectedVM() {
-    guard let id = selectedConfiguration?.id else { return }
-    stopVM(id: id)
+    let ids = selectionCapabilities.stoppableIDs
+    for id in ids { stopVM(id: id) }
   }
 
   @objc private func toggleSelectedVM() {
@@ -1581,9 +1600,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   private var selectedConfiguration: VMConfiguration? {
+    let selected = selectedConfigurations
+    return selected.count == 1 ? selected[0] : nil
+  }
+
+  private var selectedConfigurations: [VMConfiguration] {
+    guard let tableView else { return [] }
     let visible = visibleConfigurations
-    guard let row = selectedRow, visible.indices.contains(row) else { return nil }
-    return visible[row]
+    return tableView.selectedRowIndexes.compactMap { row in
+      visible.indices.contains(row) ? visible[row] : nil
+    }
+  }
+
+  private var selectionCapabilities: VMSelectionCapabilities {
+    VMSelectionCapabilities.resolve(
+      configurations: selectedConfigurations,
+      states: states,
+      discoveredNames: discoveredNames)
   }
 
   private var visibleConfigurations: [VMConfiguration] {
@@ -1771,6 +1804,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   private func refreshUI(forceTableReload: Bool = false) {
     let visible = visibleConfigurations
+    let selectedIDs = Set(selectedConfigurations.map(\.id))
     let signature = visible.map { configuration in
       [
         configuration.id.uuidString,
@@ -1786,8 +1820,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         UUID.init(uuidString:))
       tableView?.reloadData()
       lastTableSignature = signature
-      if let selectedID, let row = visible.firstIndex(where: { $0.id == selectedID }) {
-        tableView?.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+      let idsToRestore =
+        selectedIDs.isEmpty ? selectedID.map { Set([$0]) } ?? [] : selectedIDs
+      let rows = IndexSet(
+        visible.enumerated().compactMap { idsToRestore.contains($0.element.id) ? $0.offset : nil })
+      if !rows.isEmpty {
+        tableView?.selectRowIndexes(rows, byExtendingSelection: false)
       }
     }
     refreshControls()
@@ -1803,13 +1841,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       summaryLabel?.stringValue = "无法同步 Tart：\(tartSyncError)"
       summaryLabel?.textColor = .systemRed
     } else {
+      let selectedCount = selectedConfigurations.count
+      let selectionSuffix = selectedCount > 1 ? " 已选择 \(selectedCount) 台。" : ""
       if isFiltering {
-        summaryLabel?.stringValue = "显示 \(visible.count) / \(total) 台虚拟机，\(runningCount) 台正在运行。"
+        summaryLabel?.stringValue =
+          "显示 \(visible.count) / \(total) 台虚拟机，\(runningCount) 台正在运行。\(selectionSuffix)"
       } else {
         summaryLabel?.stringValue =
           runningCount == 0
-          ? "已发现/保存 \(total) 台虚拟机，没有正在运行的实例。"
-          : "已发现/保存 \(total) 台虚拟机，\(runningCount) 台正在运行。"
+          ? "已发现/保存 \(total) 台虚拟机，没有正在运行的实例。\(selectionSuffix)"
+          : "已发现/保存 \(total) 台虚拟机，\(runningCount) 台正在运行。\(selectionSuffix)"
       }
       summaryLabel?.textColor = .secondaryLabelColor
     }
@@ -1819,22 +1860,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     let operationBusy = operationProcess != nil
     imageButton?.isEnabled = tartInstalled && !operationBusy
     moreButton?.isEnabled = tartInstalled && !operationBusy
-    guard let selected = selectedConfiguration else {
-      startButton?.isEnabled = false
-      stopButton?.isEnabled = false
-      deleteButton?.isEnabled = false
-      logButton?.isEnabled = false
-      return
-    }
-    let state = states[selected.id] ?? .unknown
-    if case .unknown = state {
-      startButton?.isEnabled = false
-    } else {
-      startButton?.isEnabled = !state.isRunning
-    }
-    stopButton?.isEnabled = state.isRunning
-    deleteButton?.isEnabled = !state.isRunning && !discoveredNames.contains(selected.name)
-    logButton?.isEnabled = true
+    let capabilities = selectionCapabilities
+    let count = capabilities.selectionCount
+    startButton?.title = count > 1 ? "启动 \(capabilities.startableIDs.count) 台" : "启动"
+    stopButton?.title = count > 1 ? "停止 \(capabilities.stoppableIDs.count) 台" : "停止"
+    deleteButton?.title = count > 1 ? "移除记录 (\(count))" : "移除记录"
+    startButton?.toolTip = count > 1 ? "只启动所选项目中当前可以启动的虚拟机" : nil
+    stopButton?.toolTip = count > 1 ? "只停止所选项目中正在启动或运行的虚拟机" : nil
+    deleteButton?.toolTip = count > 1 ? "仅可批量移除本地不存在的保存记录，不会删除磁盘" : nil
+    startButton?.isEnabled = tartInstalled && !capabilities.startableIDs.isEmpty
+    stopButton?.isEnabled = tartInstalled && !capabilities.stoppableIDs.isEmpty
+    deleteButton?.isEnabled = capabilities.canRemoveRecords
+    logButton?.isEnabled = capabilities.hasSingleSelection
   }
 
   private func showAlert(title: String, message: String) {
@@ -1989,6 +2026,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     tableView.rowHeight = 36
     tableView.usesAlternatingRowBackgroundColors = true
     tableView.allowsEmptySelection = true
+    tableView.allowsMultipleSelection = true
     tableView.setAccessibilityLabel("Tart 虚拟机列表")
     tableView.autosaveName = "TartRVMTable"
     tableView.autosaveTableColumns = true

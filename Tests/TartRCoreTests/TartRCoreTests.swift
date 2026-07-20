@@ -4,6 +4,48 @@ import XCTest
 @testable import TartRCore
 
 final class TartRCoreTests: XCTestCase {
+  func testVMSelectionCapabilitiesResolveMixedBatchSafely() {
+    let stopped = VMConfiguration(name: "stopped")
+    let suspended = VMConfiguration(name: "suspended")
+    let running = VMConfiguration(name: "running")
+    let starting = VMConfiguration(name: "starting")
+    let stopping = VMConfiguration(name: "stopping")
+    let missing = VMConfiguration(name: "missing")
+    let failed = VMConfiguration(name: "failed")
+    let configurations = [stopped, suspended, running, starting, stopping, missing, failed]
+    let capabilities = VMSelectionCapabilities.resolve(
+      configurations: configurations,
+      states: [
+        stopped.id: .stopped,
+        suspended.id: .suspended,
+        running.id: .running,
+        starting.id: .starting,
+        stopping.id: .stopping,
+        missing.id: .missing,
+        failed.id: .failed(1),
+      ],
+      discoveredNames: ["stopped", "suspended", "running", "starting", "stopping"])
+
+    XCTAssertEqual(capabilities.selectionCount, 7)
+    XCTAssertEqual(capabilities.startableIDs, [stopped.id, suspended.id, failed.id])
+    XCTAssertEqual(capabilities.stoppableIDs, [running.id, starting.id])
+    XCTAssertFalse(capabilities.canRemoveRecords)
+    XCTAssertFalse(capabilities.hasSingleSelection)
+  }
+
+  func testVMSelectionCapabilitiesAllowRemovingOnlyMissingRecords() {
+    let first = VMConfiguration(name: "first")
+    let second = VMConfiguration(name: "second")
+    let capabilities = VMSelectionCapabilities.resolve(
+      configurations: [first, second],
+      states: [first.id: .missing, second.id: .unknown],
+      discoveredNames: [])
+
+    XCTAssertTrue(capabilities.canRemoveRecords)
+    XCTAssertTrue(capabilities.startableIDs.isEmpty)
+    XCTAssertTrue(capabilities.stoppableIDs.isEmpty)
+  }
+
   func testProcessDetachmentLeavesChildRunning() throws {
     let logURL = FileManager.default.temporaryDirectory
       .appendingPathComponent("tartr-detach-test-\(UUID().uuidString).log")

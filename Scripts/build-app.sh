@@ -10,12 +10,19 @@ STAGED_APP="$STAGING_ROOT/TartR.app"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT/Resources/Info.plist")"
 ZIP="$OUTPUT/TartR-$VERSION-macos.zip"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+UPDATE_MANIFEST_URL="${UPDATE_MANIFEST_URL:-}"
 
 trap '/bin/rm -rf "$STAGING_ROOT"' EXIT
+
+if [[ -n "$UPDATE_MANIFEST_URL" && "$UPDATE_MANIFEST_URL" != https://* ]]; then
+  print -u2 "UPDATE_MANIFEST_URL must use HTTPS."
+  exit 1
+fi
 
 for old_archive in "$OUTPUT"/TartR-*-macos.zip(N) "$OUTPUT"/TartR-*-macos.zip.sha256(N); do
   rm -f "$old_archive"
 done
+rm -f "$OUTPUT/TartR-update.json"
 rm -rf "$APP" "$BUILD" "$STAGING_ROOT"
 mkdir -p \
   "$STAGED_APP/Contents/MacOS" \
@@ -36,6 +43,10 @@ X86_BIN_DIR="$(build_arch x86_64 | tail -n 1)"
   "$ARM_BIN_DIR/TartR" "$X86_BIN_DIR/TartR" -output "$STAGED_APP/Contents/MacOS/TartR"
 
 /bin/cp "$ROOT/Resources/Info.plist" "$STAGED_APP/Contents/Info.plist"
+if [[ -n "$UPDATE_MANIFEST_URL" ]]; then
+  /usr/libexec/PlistBuddy \
+    -c "Set :TartRUpdateManifestURL $UPDATE_MANIFEST_URL" "$STAGED_APP/Contents/Info.plist"
+fi
 
 /usr/bin/swiftc -O -framework AppKit "$ROOT/Tools/IconGenerator.swift" -o "$BUILD/icon-generator"
 for size in 16 32 128 256 512; do

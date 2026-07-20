@@ -11,6 +11,8 @@ private let defaultsBackupKey = "vmConfigurations.v2.backup"
 private let defaultsCorruptKey = "vmConfigurations.v2.corruptBackup"
 private let selectedVMKey = "selectedVM.v2"
 private let tartExecutablePathKey = "tartExecutablePath.v1"
+private let automaticUpdateChecksKey = "automaticUpdateChecks.v1"
+private let lastUpdateCheckKey = "lastUpdateCheck.v1"
 private let legacyAppIDs = [
   "local.caiyagang.tartr",
   "local.caiyagang.tart-vm-manager",
@@ -37,6 +39,70 @@ private final class VMRuntime {
   }
 }
 
+private final class LimitedHTTPDataLoader: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+  private let maximumBytes: Int
+  private let completion: (Data?, URLResponse?, Error?) -> Void
+  private var receivedData = Data()
+  private var receivedResponse: URLResponse?
+  private var limitError: Error?
+  private var session: URLSession?
+  private var task: URLSessionDataTask?
+
+  init(maximumBytes: Int, completion: @escaping (Data?, URLResponse?, Error?) -> Void) {
+    self.maximumBytes = maximumBytes
+    self.completion = completion
+  }
+
+  func start(request: URLRequest, configuration: URLSessionConfiguration) {
+    let queue = OperationQueue()
+    queue.maxConcurrentOperationCount = 1
+    let session = URLSession(configuration: configuration, delegate: self, delegateQueue: queue)
+    self.session = session
+    let task = session.dataTask(with: request)
+    self.task = task
+    task.resume()
+  }
+
+  func cancel() {
+    task?.cancel()
+    session?.invalidateAndCancel()
+  }
+
+  func urlSession(
+    _ session: URLSession,
+    dataTask: URLSessionDataTask,
+    didReceive response: URLResponse,
+    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+  ) {
+    receivedResponse = response
+    if response.expectedContentLength > Int64(maximumBytes) {
+      limitError = CocoaError(.fileReadTooLarge)
+      completionHandler(.cancel)
+    } else {
+      completionHandler(.allow)
+    }
+  }
+
+  func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+    guard data.count <= maximumBytes - receivedData.count else {
+      limitError = CocoaError(.fileReadTooLarge)
+      dataTask.cancel()
+      return
+    }
+    receivedData.append(data)
+  }
+
+  func urlSession(
+    _ session: URLSession, task: URLSessionTask,
+    didCompleteWithError error: Error?
+  ) {
+    self.task = nil
+    self.session = nil
+    session.finishTasksAndInvalidate()
+    completion(limitError == nil ? receivedData : nil, receivedResponse, limitError ?? error)
+  }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   NSMenuItemValidation, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate
 {
@@ -59,6 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   private var catalogTargetField: NSTextField?
   private var catalogSourceField: NSTextField?
   private var launchAtLoginMenuItem: NSMenuItem?
+  private var automaticUpdateMenuItem: NSMenuItem?
 
   private var configurations: [VMConfiguration] = []
   private var states: [UUID: VMState] = [:]
@@ -79,6 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   private var lastTableSignature: String?
   private var isQuitting = false
   private var configurationRecoveryNotice: String?
+  private var updateLoader: LimitedHTTPDataLoader?
 
   private lazy var logsDirectory: URL = {
     let url = FileManager.default.homeDirectoryForCurrentUser
@@ -91,6 +159,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.regular)
+    UserDefaults.standard.register(defaults: [automaticUpdateChecksKey: true])
+    NSWorkspace.shared.notificationCenter.addObserver(
+      self,
+      selector: #selector(workspaceDidWake(_:)),
+      name: NSWorkspace.didWakeNotification,
+      object: nil)
     TemporaryFileCleanup.removeStaleFiles(
       in: FileManager.default.temporaryDirectory,
       namePrefix: "tartr-command-",
@@ -122,11 +196,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     syncTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
       self?.syncTartState()
     }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+      self?.checkForUpdatesIfDue()
+    }
+  }
+
+  func applicationWillTerminate(_ notification: Notification) {
+    isQuitting = true
+    NSWorkspace.shared.notificationCenter.removeObserver(self)
+    updateLoader?.cancel()
   }
 
   func applicationDidBecomeActive(_ notification: Notification) {
     updateLaunchAtLoginMenuItem()
+    updateAutomaticUpdateMenuItem()
     syncTartState()
+  }
+
+  @objc private func workspaceDidWake(_ notification: Notification) {
+    syncTartState()
+    checkForUpdatesIfDue()
   }
 
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool
@@ -238,6 +327,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       return operationProcess == nil && !syncInProgress
     case #selector(resetTartExecutable):
       return configuredTartExecutablePath != nil && operationProcess == nil && !syncInProgress
+    case #selector(checkForUpdates):
+      return updateLoader == nil
+    case #selector(toggleAutomaticUpdateChecks):
+      return configuredUpdateManifestURL != nil
     default:
       return true
     }
@@ -440,6 +533,130 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   @objc private func openQuickStart() {
     NSWorkspace.shared.open(URL(string: "https://tart.run/quick-start/")!)
+  }
+
+  @objc private func checkForUpdates() {
+    performUpdateCheck(manual: true)
+  }
+
+  @objc private func toggleAutomaticUpdateChecks() {
+    let defaults = UserDefaults.standard
+    defaults.set(!defaults.bool(forKey: automaticUpdateChecksKey), forKey: automaticUpdateChecksKey)
+    updateAutomaticUpdateMenuItem()
+    checkForUpdatesIfDue()
+  }
+
+  private func updateAutomaticUpdateMenuItem() {
+    let isConfigured = configuredUpdateManifestURL != nil
+    automaticUpdateMenuItem?.isEnabled = isConfigured
+    automaticUpdateMenuItem?.state =
+      isConfigured && UserDefaults.standard.bool(forKey: automaticUpdateChecksKey) ? .on : .off
+  }
+
+  private func checkForUpdatesIfDue() {
+    let defaults = UserDefaults.standard
+    guard defaults.bool(forKey: automaticUpdateChecksKey), configuredUpdateManifestURL != nil else {
+      return
+    }
+    if let lastCheck = defaults.object(forKey: lastUpdateCheckKey) as? Date,
+      Date().timeIntervalSince(lastCheck) < 24 * 60 * 60
+    {
+      return
+    }
+    performUpdateCheck(manual: false)
+  }
+
+  private func performUpdateCheck(manual: Bool) {
+    guard updateLoader == nil else { return }
+    guard let manifestURL = configuredUpdateManifestURL else {
+      if manual {
+        showAlert(
+          title: "此构建未配置更新源",
+          message: "本地开发构建默认不联网。正式发布构建可通过 UPDATE_MANIFEST_URL 配置 HTTPS 更新源。")
+      }
+      return
+    }
+
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.timeoutIntervalForRequest = 10
+    configuration.timeoutIntervalForResource = 15
+    configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+    configuration.httpCookieStorage = nil
+    var request = URLRequest(url: manifestURL)
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    let version =
+      Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+    request.setValue("TartR/\(version)", forHTTPHeaderField: "User-Agent")
+    let loader = LimitedHTTPDataLoader(maximumBytes: 1_024 * 1_024) {
+      [weak self] data, response, error in
+      DispatchQueue.main.async {
+        self?.handleUpdateResponse(data: data, response: response, error: error, manual: manual)
+      }
+    }
+    updateLoader = loader
+    loader.start(request: request, configuration: configuration)
+  }
+
+  private func handleUpdateResponse(
+    data: Data?, response: URLResponse?, error: Error?, manual: Bool
+  ) {
+    updateLoader = nil
+    guard !isQuitting else { return }
+
+    guard error == nil,
+      let httpResponse = response as? HTTPURLResponse,
+      httpResponse.statusCode == 200,
+      let data, data.count <= 1_024 * 1_024,
+      let manifest = try? JSONDecoder().decode(UpdateManifest.self, from: data),
+      let validated = UpdateManifestValidation.validate(manifest)
+    else {
+      if manual {
+        showAlert(title: "无法检查更新", message: error?.localizedDescription ?? "更新服务器返回了无效响应。")
+      }
+      return
+    }
+    UserDefaults.standard.set(Date(), forKey: lastUpdateCheckKey)
+
+    let currentVersionString =
+      Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+    guard let currentVersion = AppVersion(currentVersionString) else {
+      if manual { showAlert(title: "无法检查更新", message: "当前 App 版本格式无效。") }
+      return
+    }
+    let system = ProcessInfo.processInfo.operatingSystemVersion
+    let systemVersion = AppVersion(
+      "\(system.majorVersion).\(system.minorVersion).\(system.patchVersion)")!
+    guard systemVersion >= validated.minimumSystemVersion else {
+      if manual {
+        showAlert(
+          title: "最新版本需要更高版本的 macOS",
+          message: "最新 TartR 要求 macOS \(manifest.minimumSystemVersion) 或更高版本。")
+      }
+      return
+    }
+    guard validated.version > currentVersion else {
+      if manual {
+        showAlert(title: "TartR 已是最新版", message: "当前版本：\(currentVersionString)")
+      }
+      return
+    }
+
+    showWindow()
+    let alert = NSAlert()
+    alert.messageText = "TartR \(manifest.version) 可以下载"
+    alert.informativeText =
+      "当前版本：\(currentVersionString)\n下载通过浏览器完成。DMG SHA-256：\n\(validated.sha256)"
+    alert.addButton(withTitle: "下载 DMG")
+    alert.addButton(withTitle: "查看发布说明")
+    alert.addButton(withTitle: "稍后")
+    switch alert.runModal() {
+    case .alertFirstButtonReturn:
+      NSWorkspace.shared.open(validated.downloadURL)
+    case .alertSecondButtonReturn:
+      NSWorkspace.shared.open(validated.releaseNotesURL)
+    default:
+      break
+    }
   }
 
   @objc private func chooseTartExecutable() {
@@ -1794,6 +2011,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     return path
   }
 
+  private var configuredUpdateManifestURL: URL? {
+    guard
+      let rawValue = Bundle.main.object(forInfoDictionaryKey: "TartRUpdateManifestURL") as? String,
+      !rawValue.isEmpty,
+      let components = URLComponents(string: rawValue),
+      components.scheme?.lowercased() == "https",
+      components.host?.isEmpty == false,
+      components.user == nil,
+      components.password == nil
+    else { return nil }
+    return components.url
+  }
+
   private var tartExecutableURL: URL? {
     TartExecutableLocator.locate(explicitPath: configuredTartExecutablePath)
   }
@@ -2382,6 +2612,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     let about = NSMenuItem(title: "关于 TartR", action: #selector(showAbout), keyEquivalent: "")
     about.target = self
     appMenu.addItem(about)
+    let checkUpdates = NSMenuItem(
+      title: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
+    checkUpdates.target = self
+    appMenu.addItem(checkUpdates)
+    let automaticUpdates = NSMenuItem(
+      title: "自动检查更新", action: #selector(toggleAutomaticUpdateChecks), keyEquivalent: "")
+    automaticUpdates.target = self
+    automaticUpdateMenuItem = automaticUpdates
+    appMenu.addItem(automaticUpdates)
+    updateAutomaticUpdateMenuItem()
     appMenu.addItem(.separator())
     let show = NSMenuItem(title: "显示窗口", action: #selector(showWindow), keyEquivalent: "1")
     show.target = self

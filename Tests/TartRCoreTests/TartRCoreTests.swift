@@ -4,6 +4,35 @@ import XCTest
 @testable import TartRCore
 
 final class TartRCoreTests: XCTestCase {
+  func testAppVersionComparisonAndUpdateManifestValidation() {
+    XCTAssertLessThan(AppVersion("4.10.0")!, AppVersion("4.11")!)
+    XCTAssertEqual(AppVersion("v4.11.0"), AppVersion("4.11"))
+    XCTAssertNil(AppVersion("4.11-beta"))
+    XCTAssertNil(AppVersion("4..11"))
+
+    let manifest = UpdateManifest(
+      schemaVersion: 1,
+      version: "4.11.0",
+      minimumSystemVersion: "13.0",
+      downloadURL: "https://example.com/TartR-4.11.0-macos.dmg",
+      releaseNotesURL: "https://example.com/releases/v4.11.0",
+      sha256: String(repeating: "a", count: 64))
+    let validated = UpdateManifestValidation.validate(manifest)
+    XCTAssertEqual(validated?.version, AppVersion("4.11.0"))
+    XCTAssertEqual(validated?.minimumSystemVersion, AppVersion("13"))
+    XCTAssertEqual(validated?.sha256, String(repeating: "a", count: 64))
+
+    XCTAssertNil(
+      UpdateManifestValidation.validate(
+        UpdateManifest(
+          schemaVersion: 1,
+          version: "4.11.0",
+          minimumSystemVersion: "13.0",
+          downloadURL: "http://example.com/TartR.dmg",
+          releaseNotesURL: "https://user:password@example.com/release",
+          sha256: "bad")))
+  }
+
   func testStorageCapacityPreflightKeepsReserveAndHandlesUnknownCapacity() {
     let gib: UInt64 = 1_024 * 1_024 * 1_024
     XCTAssertEqual(

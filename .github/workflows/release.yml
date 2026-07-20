@@ -57,6 +57,7 @@ jobs:
       - name: Build signed universal app
         env:
           SIGN_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION }}
+          UPDATE_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/latest/download/TartR-update.json
         run: make build
 
       - name: Configure notarization
@@ -80,8 +81,12 @@ jobs:
         run: make notarize
 
       - name: Package source and verify
+        env:
+          RELEASE_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+          RELEASE_NOTES_URL: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
         run: |
           Scripts/package-source.sh "$GITHUB_REF_NAME"
+          make manifest verify-manifest
           make verify
 
       - name: Publish GitHub release
@@ -95,6 +100,7 @@ jobs:
             outputs/TartR-*-macos.dmg.sha256
             outputs/TartR-*-source.zip
             outputs/TartR-*-source.zip.sha256
+            outputs/TartR-update.json
 
       - name: Remove temporary keychain
         if: always()

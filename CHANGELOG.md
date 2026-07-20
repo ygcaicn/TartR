@@ -2,6 +2,21 @@
 
 All notable changes to TartR are documented here.
 
+## 4.11.0 - 2026-07-20
+
+### Added
+
+- 正式发布构建支持手动检查更新和可关闭的每日自动检查，本地构建默认不联网
+- GitHub Release 自动注入实际仓库的稳定 manifest 地址并发布 `TartR-update.json`
+- 更新提示提供 DMG 下载、发布说明和完整 SHA-256，但不会自动下载、安装或执行代码
+- Mac 从睡眠唤醒后立即恢复 Tart 状态同步，并在检查周期到期时查询更新
+
+### Fixed
+
+- 更新 manifest 严格限制为 1 MB、HTTPS、无内嵌凭据、合法版本、DMG 地址及 64 字符 SHA-256
+- 版本比较统一处理 `v` 前缀、缺省尾部零和最多四段数字，拒绝预发布或畸形版本
+- CI 和 Release 都生成并验证更新 manifest，DMG 校验和不匹配时不会发布
+
 ## 4.10.0 - 2026-07-20
 
 ### Added

@@ -28,6 +28,11 @@ jobs:
         run: make compat
       - name: Build universal release
         run: make build
+      - name: Generate update manifest
+        env:
+          RELEASE_BASE_URL: https://example.invalid/releases/download/development
+          RELEASE_NOTES_URL: https://example.invalid/releases/development
+        run: make manifest verify-manifest
       - name: Verify release
         run: make verify
       - uses: actions/upload-artifact@v4
@@ -39,3 +44,4 @@ jobs:
             outputs/TartR-*-macos.zip.sha256
             outputs/TartR-*-macos.dmg
             outputs/TartR-*-macos.dmg.sha256
+            outputs/TartR-update.json

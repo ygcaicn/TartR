@@ -19,9 +19,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>4.10.0</string>
+    <string>4.11.0</string>
     <key>CFBundleVersion</key>
-    <string>14</string>
+    <string>15</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.developer-tools</string>
     <key>LSMinimumSystemVersion</key>
@@ -34,5 +34,7 @@
     <string>Copyright © 2026 TartR contributors.</string>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
+    <key>TartRUpdateManifestURL</key>
+    <string></string>
 </dict>
 </plist>

@@ -15,7 +15,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-/usr/bin/shasum -a 256 -c "$DMG.sha256"
+[[ "$(/usr/bin/awk '{print $2}' "$DMG.sha256")" == "${DMG:t}" ]]
+(
+  cd "$ROOT/outputs"
+  /usr/bin/shasum -a 256 -c "${DMG:t}.sha256"
+)
 /usr/bin/codesign --verify --verbose=2 "$DMG"
 /usr/bin/hdiutil verify "$DMG"
 /bin/mkdir -p "$MOUNT_POINT"

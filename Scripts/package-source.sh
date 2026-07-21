@@ -15,6 +15,10 @@ for old_archive in "$OUTPUT"/TartR-*-source.zip(N) "$OUTPUT"/TartR-*-source.zip.
   /bin/rm -f "$old_archive"
 done
 /usr/bin/git -C "$ROOT" archive --format=zip --prefix="TartR-$VERSION/" -o "$ARCHIVE" "$REF"
-/usr/bin/shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
+(
+  cd "$OUTPUT"
+  /usr/bin/shasum -a 256 "${ARCHIVE:t}" > "${ARCHIVE:t}.sha256"
+  /usr/bin/shasum -a 256 -c "${ARCHIVE:t}.sha256"
+)
 
 echo "$ARCHIVE"

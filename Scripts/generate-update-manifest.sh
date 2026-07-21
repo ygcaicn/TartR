@@ -19,7 +19,11 @@ if [[ ! -f "$DMG" || ! -f "$CHECKSUM" ]]; then
   exit 1
 fi
 
-/usr/bin/shasum -a 256 -c "$CHECKSUM"
+[[ "$(/usr/bin/awk '{print $2}' "$CHECKSUM")" == "${DMG:t}" ]]
+(
+  cd "$ROOT/outputs"
+  /usr/bin/shasum -a 256 -c "${CHECKSUM:t}"
+)
 SHA256="$(/usr/bin/awk '{print $1}' "$CHECKSUM")"
 FILE_SIZE="$(/usr/bin/stat -f '%z' "$DMG")"
 DOWNLOAD_URL="${RELEASE_BASE_URL%/}/TartR-$VERSION-macos.dmg"

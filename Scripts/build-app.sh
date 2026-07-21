@@ -65,6 +65,9 @@ fi
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$STAGED_APP"
 
 /usr/bin/ditto -c -k --keepParent --norsrc "$STAGED_APP" "$ZIP"
-/usr/bin/shasum -a 256 "$ZIP" > "$ZIP.sha256"
+(
+  cd "$OUTPUT"
+  /usr/bin/shasum -a 256 "${ZIP:t}" > "${ZIP:t}.sha256"
+)
 
 echo "$ZIP"

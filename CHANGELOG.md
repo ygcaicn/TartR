@@ -2,6 +2,13 @@
 
 All notable changes to TartR are documented here.
 
+## 4.17.1 - 2026-07-20
+
+### Fixed
+
+- SHA-256 校验文件现在只记录可移植文件名，不再包含 GitHub runner 或本机构建目录的绝对路径
+- ZIP、DMG、源码包、manifest 和公证后重新打包流程统一生成相同格式，并在发布校验中直接执行 `shasum -c`
+
 ## 4.17.0 - 2026-07-20
 
 ### Added

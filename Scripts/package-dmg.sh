@@ -39,6 +39,9 @@ else
 fi
 /usr/bin/codesign --verify --verbose=2 "$DMG"
 /usr/bin/hdiutil verify "$DMG"
-/usr/bin/shasum -a 256 "$DMG" > "$DMG.sha256"
+(
+  cd "$OUTPUT"
+  /usr/bin/shasum -a 256 "${DMG:t}" > "${DMG:t}.sha256"
+)
 
 echo "$DMG"

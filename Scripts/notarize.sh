@@ -40,13 +40,19 @@ fi
 /usr/bin/xcrun stapler validate "$STAGED_APP"
 /usr/sbin/spctl --assess --type execute --verbose=2 "$STAGED_APP"
 /usr/bin/ditto -c -k --keepParent --norsrc "$STAGED_APP" "$ZIP"
-/usr/bin/shasum -a 256 "$ZIP" > "$ZIP.sha256"
+(
+  cd "$OUTPUT"
+  /usr/bin/shasum -a 256 "${ZIP:t}" > "${ZIP:t}.sha256"
+)
 SIGN_IDENTITY="$SIGN_IDENTITY" "$ROOT/Scripts/package-dmg.sh"
 /usr/bin/xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait
 /usr/bin/xcrun stapler staple "$DMG"
 /usr/bin/xcrun stapler validate "$DMG"
 /usr/bin/codesign --verify --verbose=2 "$DMG"
 /usr/sbin/spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
-/usr/bin/shasum -a 256 "$DMG" > "$DMG.sha256"
+(
+  cd "$OUTPUT"
+  /usr/bin/shasum -a 256 "${DMG:t}" > "${DMG:t}.sha256"
+)
 
 echo "Notarized releases: $ZIP and $DMG"

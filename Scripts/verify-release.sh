@@ -25,7 +25,11 @@ trap '/bin/rm -rf "$VERIFY_DIR"' EXIT
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleLocalizations:0' "$APP/Contents/Info.plist")" == "en" ]]
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleLocalizations:1' "$APP/Contents/Info.plist")" == "zh-Hans" ]]
 /usr/bin/lipo "$APP/Contents/MacOS/TartR" -verify_arch arm64 x86_64
-/usr/bin/shasum -a 256 -c "$ZIP.sha256"
+[[ "$(/usr/bin/awk '{print $2}' "$ZIP.sha256")" == "${ZIP:t}" ]]
+(
+  cd "$ROOT/outputs"
+  /usr/bin/shasum -a 256 -c "${ZIP:t}.sha256"
+)
 
 ACTUAL_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
 BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")"

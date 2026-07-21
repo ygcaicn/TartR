@@ -23,6 +23,9 @@ trap cleanup EXIT
 ATTACHED=true
 
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP"
+/usr/bin/plutil -lint \
+  "$APP/Contents/Resources/en.lproj/Localizable.strings" \
+  "$APP/Contents/Resources/zh-Hans.lproj/Localizable.strings"
 /usr/bin/lipo "$APP/Contents/MacOS/TartR" -verify_arch arm64 x86_64
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" == "$EXPECTED_BUNDLE_ID" ]]
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")" == "$VERSION" ]]

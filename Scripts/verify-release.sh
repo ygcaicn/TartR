@@ -16,6 +16,14 @@ trap '/bin/rm -rf "$VERIFY_DIR"' EXIT
 /usr/bin/xattr -cr "$APP"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP"
 /usr/bin/plutil -lint "$APP/Contents/Info.plist"
+/usr/bin/plutil -lint \
+  "$APP/Contents/Resources/en.lproj/Localizable.strings" \
+  "$APP/Contents/Resources/zh-Hans.lproj/Localizable.strings"
+[[ "$(/usr/bin/plutil -extract __language__ raw "$APP/Contents/Resources/en.lproj/Localizable.strings")" == "English" ]]
+[[ "$(/usr/bin/plutil -extract Run raw "$APP/Contents/Resources/zh-Hans.lproj/Localizable.strings")" == "启动" ]]
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDevelopmentRegion' "$APP/Contents/Info.plist")" == "en" ]]
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleLocalizations:0' "$APP/Contents/Info.plist")" == "en" ]]
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleLocalizations:1' "$APP/Contents/Info.plist")" == "zh-Hans" ]]
 /usr/bin/lipo "$APP/Contents/MacOS/TartR" -verify_arch arm64 x86_64
 /usr/bin/shasum -a 256 -c "$ZIP.sha256"
 

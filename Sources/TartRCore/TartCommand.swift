@@ -116,7 +116,7 @@ public enum TartShellBridge {
     export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
     tart_path="${TART_EXECUTABLE:-$(command -v tart 2>/dev/null)}"
     if [[ -z "$tart_path" || ! -x "$tart_path" ]]; then
-      print -u2 "找不到 tart 命令。请确认 Tart 已安装，并位于 Homebrew、~/.local/bin 或登录 shell 的 PATH 中。"
+      print -u2 "The tart command was not found. Install Tart or add it to Homebrew, ~/.local/bin, or the login shell PATH."
       exit 127
     fi
     exec "$tart_path" "$@"

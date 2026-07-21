@@ -1,13 +1,17 @@
-.PHONY: test format check compat build smoke dmg manifest verify verify-dmg verify-manifest source notarize clean
+.PHONY: test format localization check compat build smoke dmg manifest verify verify-dmg verify-manifest source notarize clean
 
 test:
 	swift test
+
+localization:
+	swift Tools/VerifyLocalizations.swift
 
 format:
 	swift format --in-place --recursive Sources Tests Package.swift
 
 check:
 	swift format lint --strict --recursive Sources Tests Package.swift
+	$(MAKE) localization
 	swift test
 
 compat:
@@ -18,7 +22,8 @@ build:
 	Scripts/package-dmg.sh
 
 smoke:
-	Scripts/smoke-app.sh
+	TARTR_SMOKE_LANGUAGE=en Scripts/smoke-app.sh
+	TARTR_SMOKE_LANGUAGE=zh-Hans Scripts/smoke-app.sh
 
 dmg:
 	Scripts/package-dmg.sh

@@ -6,6 +6,9 @@ import TartRCore
 import UniformTypeIdentifiers
 
 private let appTitle = "TartR"
+private func localized(_ key: String, _ arguments: CVarArg...) -> String {
+  TartRLocalization.string(key, arguments: arguments)
+}
 private let defaultsKey = "vmConfigurations.v2"
 private let defaultsBackupKey = "vmConfigurations.v2.backup"
 private let defaultsCorruptKey = "vmConfigurations.v2.corruptBackup"
@@ -123,11 +126,17 @@ private enum SecureUpdateDownloadError: LocalizedError {
 
   var errorDescription: String? {
     switch self {
-    case .invalidResponse: return "更新服务器返回了无效的下载响应。"
-    case .insecureRedirect: return "更新下载被重定向到不安全的地址。"
-    case .sizeLimitExceeded: return "更新包大小与 manifest 不符或超过 512 MB 安全上限。"
-    case .verificationFailed: return "更新包的文件大小或 SHA-256 校验失败，文件未保存。"
-    case .cannotStore(let detail): return "无法保存已验证的更新包：\(detail)"
+    case .invalidResponse:
+      return localized("The update server returned an invalid download response.")
+    case .insecureRedirect:
+      return localized("The update download was redirected to an insecure address.")
+    case .sizeLimitExceeded:
+      return localized(
+        "The update package size does not match the manifest or exceeds the 512 MB limit.")
+    case .verificationFailed:
+      return localized("The update package failed size or SHA-256 verification and was not saved.")
+    case .cannotStore(let detail):
+      return localized("Unable to save the verified update package: %@", detail)
     }
   }
 }
@@ -371,7 +380,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     NSApp.activate(ignoringOtherApps: true)
     if let configurationRecoveryNotice {
       DispatchQueue.main.async { [weak self] in
-        self?.showAlert(title: "虚拟机列表已恢复", message: configurationRecoveryNotice)
+        self?.showAlert(title: localized("VM list restored"), message: configurationRecoveryNotice)
       }
     }
     syncTartState { [weak self] in
@@ -438,13 +447,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       showWindow()
       let alert = NSAlert()
       alert.alertStyle = .warning
-      alert.messageText = "仍有 \(managedRuntimes.count) 台虚拟机由 TartR 启动"
+      alert.messageText = localized("TartR is still managing %d VM(s)", managedRuntimes.count)
       alert.informativeText =
-        "可以让虚拟机继续在后台运行；稍后重新打开 TartR 会自动同步并继续管理。"
-        + (backgroundProcesses.isEmpty ? "" : " 当前正在执行的其他 Tart 操作将被取消。")
-      alert.addButton(withTitle: "保持 VM 运行并退出")
-      alert.addButton(withTitle: "停止 VM 并退出")
-      alert.addButton(withTitle: "取消")
+        localized(
+          "You can keep the VMs running in the background. TartR will synchronize and resume management when reopened."
+        )
+        + (backgroundProcesses.isEmpty
+          ? "" : localized(" Other active Tart operations will be cancelled."))
+      alert.addButton(withTitle: localized("Keep VMs Running and Quit"))
+      alert.addButton(withTitle: localized("Stop VMs and Quit"))
+      alert.addButton(withTitle: localized("Cancel"))
       switch alert.runModal() {
       case .alertFirstButtonReturn:
         keepVMsRunning = true
@@ -457,10 +469,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       showWindow()
       let alert = NSAlert()
       alert.alertStyle = .warning
-      alert.messageText = "Tart 操作尚未完成"
-      alert.informativeText = "现在退出会取消正在执行的操作。"
-      alert.addButton(withTitle: "取消操作并退出")
-      alert.addButton(withTitle: "继续等待")
+      alert.messageText = localized("A Tart operation is still in progress")
+      alert.informativeText = localized("Quitting now will cancel the active operation.")
+      alert.addButton(withTitle: localized("Cancel Operation and Quit"))
+      alert.addButton(withTitle: localized("Keep Waiting"))
       guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
     }
 
@@ -469,7 +481,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     var processesToTerminate = backgroundProcesses
 
     if keepVMsRunning {
-      appendApplicationLog("TartR 退出，保留 \(managedRuntimes.count) 台由 TartR 启动的虚拟机继续运行。")
+      appendApplicationLog(
+        localized("TartR quit while leaving %d managed VM(s) running.", managedRuntimes.count))
       for runtime in managedRuntimes {
         ProcessDetachment.detach(runtime.process, closing: [runtime.logHandle])
       }
@@ -581,7 +594,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         checkboxWithTitle: "", target: self, action: #selector(toggleAutoStart(_:)))
       checkbox.state = configuration.autoStart ? .on : .off
       checkbox.tag = row
-      checkbox.setAccessibilityLabel("打开 TartR 时自动启动 \(configuration.name)")
+      checkbox.setAccessibilityLabel(
+        localized("Start %@ automatically when TartR opens", configuration.name))
       checkbox.setAccessibilityValue(configuration.autoStart)
       checkbox.translatesAutoresizingMaskIntoConstraints = false
       cell.addSubview(checkbox)
@@ -627,7 +641,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     guard !name.isEmpty else { return }
     guard !configurations.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame })
     else {
-      showAlert(title: "名称已存在", message: "“\(name)”已经在虚拟机列表中。")
+      showAlert(
+        title: localized("Name already exists"),
+        message: localized("“%@” is already in the VM list.", name))
       return
     }
 
@@ -651,17 +667,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     guard !selected.isEmpty else { return }
     guard capabilities.canRemoveRecords else {
       showAlert(
-        title: "无法移除所选记录",
-        message: "只能移除本地不存在且未运行的保存记录；TartR 不会通过此按钮删除虚拟机磁盘。")
+        title: localized("Unable to remove selected records"),
+        message: localized(
+          "Only saved records that are missing locally and not running can be removed. This button never deletes VM disks."
+        ))
       return
     }
     if selected.count > 1 {
       let alert = NSAlert()
       alert.alertStyle = .warning
-      alert.messageText = "移除 \(selected.count) 条虚拟机记录？"
-      alert.informativeText = "只会移除 TartR 保存的记录，不会删除任何虚拟机磁盘。"
-      alert.addButton(withTitle: "移除记录")
-      alert.addButton(withTitle: "取消")
+      alert.messageText = localized("Remove %d VM record(s)?", selected.count)
+      alert.informativeText = localized(
+        "Only the records saved by TartR will be removed. No VM disks will be deleted.")
+      alert.addButton(withTitle: localized("Remove Records"))
+      alert.addButton(withTitle: localized("Cancel"))
       guard alert.runModal() == .alertFirstButtonReturn else { return }
     }
 
@@ -723,7 +742,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(command, forType: .string)
     NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"))
-    showAlert(title: "安装命令已复制", message: "请在终端按 ⌘V 粘贴并回车：\n\n\(command)\n\n安装完成后 TartR 会自动检测。")
+    showAlert(
+      title: localized("Installation command copied"),
+      message: localized(
+        "Press ⌘V in Terminal, then press Return:\n\n%@\n\nTartR will detect the installation automatically.",
+        command))
   }
 
   @objc private func openQuickStart() {
@@ -766,8 +789,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     guard let manifestURL = configuredUpdateManifestURL else {
       if manual {
         showAlert(
-          title: "此构建未配置更新源",
-          message: "本地开发构建默认不联网。正式发布构建可通过 UPDATE_MANIFEST_URL 配置 HTTPS 更新源。")
+          title: localized("No update source is configured for this build"),
+          message: localized(
+            "Local development builds do not connect to the network by default. Release builds can configure an HTTPS update source with UPDATE_MANIFEST_URL."
+          ))
       }
       return
     }
@@ -807,7 +832,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       let validated = UpdateManifestValidation.validate(manifest)
     else {
       if manual {
-        showAlert(title: "无法检查更新", message: error?.localizedDescription ?? "更新服务器返回了无效响应。")
+        showAlert(
+          title: localized("Unable to check for updates"),
+          message: error?.localizedDescription
+            ?? localized("The update server returned an invalid response."))
       }
       return
     }
@@ -816,7 +844,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     let currentVersionString =
       Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
     guard let currentVersion = AppVersion(currentVersionString) else {
-      if manual { showAlert(title: "无法检查更新", message: "当前 App 版本格式无效。") }
+      if manual {
+        showAlert(
+          title: localized("Unable to check for updates"),
+          message: localized("The current app version is invalid.")
+        )
+      }
       return
     }
     let system = ProcessInfo.processInfo.operatingSystemVersion
@@ -825,30 +858,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     guard systemVersion >= validated.minimumSystemVersion else {
       if manual {
         showAlert(
-          title: "最新版本需要更高版本的 macOS",
-          message: "最新 TartR 要求 macOS \(manifest.minimumSystemVersion) 或更高版本。")
+          title: localized("The latest version requires a newer macOS"),
+          message: localized(
+            "The latest TartR requires macOS %@ or later.", manifest.minimumSystemVersion))
       }
       return
     }
     guard validated.version > currentVersion else {
       if manual {
-        showAlert(title: "TartR 已是最新版", message: "当前版本：\(currentVersionString)")
+        showAlert(
+          title: localized("TartR is up to date"),
+          message: localized("Current version: %@", currentVersionString))
       }
       return
     }
 
     showWindow()
     let alert = NSAlert()
-    alert.messageText = "TartR \(manifest.version) 可以下载"
+    alert.messageText = localized("TartR %@ is available", manifest.version)
     let sizeDescription =
       validated.fileSize.map {
         ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file)
-      } ?? "manifest 未提供"
+      } ?? localized("Not provided by the manifest")
     alert.informativeText =
-      "当前版本：\(currentVersionString)\nDMG 大小：\(sizeDescription)\nSHA-256：\n\(validated.sha256)"
-    alert.addButton(withTitle: validated.fileSize == nil ? "用浏览器下载" : "安全下载 DMG")
-    alert.addButton(withTitle: "查看发布说明")
-    alert.addButton(withTitle: "稍后")
+      localized(
+        "Current version: %@\nDMG size: %@\nSHA-256:\n%@", currentVersionString, sizeDescription,
+        validated.sha256)
+    alert.addButton(
+      withTitle: validated.fileSize == nil
+        ? localized("Download in Browser") : localized("Securely Download DMG"))
+    alert.addButton(withTitle: localized("View Release Notes"))
+    alert.addButton(withTitle: localized("Later"))
     switch alert.runModal() {
     case .alertFirstButtonReturn:
       if let expectedSize = validated.fileSize {
@@ -868,13 +908,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     manifest: ValidatedUpdateManifest, expectedSize: UInt64, version: String
   ) {
     guard updateDownloader == nil, operationProcess == nil else {
-      showAlert(title: "已有操作正在进行", message: "请等待当前操作完成或先取消。")
+      showAlert(
+        title: localized("An operation is already in progress"),
+        message: localized("Wait for the current operation to finish or cancel it first."))
       return
     }
     let panel = NSSavePanel()
-    panel.title = "下载并验证 TartR 更新"
-    panel.message = "下载完成后必须同时通过文件大小和 SHA-256 校验，TartR 才会保存 DMG。"
-    panel.prompt = "下载"
+    panel.title = localized("Download and Verify TartR Update")
+    panel.message = localized(
+      "TartR will save the DMG only after both file size and SHA-256 verification succeed.")
+    panel.prompt = localized("Download")
     panel.allowedContentTypes = [.diskImage]
     panel.canCreateDirectories = true
     panel.nameFieldStringValue = manifest.downloadURL.lastPathComponent
@@ -885,7 +928,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     guard panel.runModal() == .OK, let destinationURL = panel.url else { return }
     guard
       confirmStorageCapacity(
-        operation: "下载 TartR \(version) 更新",
+        operation: localized("Download TartR %@ update", version),
         operationBytes: expectedSize,
         at: destinationURL.deletingLastPathComponent(),
         offersCacheCleanup: false)
@@ -904,7 +947,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         guard let self else { return }
         let percent = total == 0 ? 0 : min(100, Int(received * 100 / total))
         self.operationLabel?.stringValue =
-          "正在安全下载 TartR \(version)… \(percent)%（\(self.storageByteString(received)) / \(self.storageByteString(total))）"
+          localized(
+            "Securely downloading TartR %@… %d%% (%@ / %@)", version, percent,
+            self.storageByteString(received), self.storageByteString(total))
       },
       completion: { [weak self, weak downloader] result in
         guard let self, let downloader, self.updateDownloader === downloader else { return }
@@ -916,24 +961,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
           self.presentVerifiedUpdate(at: url, version: version)
         case .failure(let error):
           if (error as? URLError)?.code != .cancelled {
-            self.showAlert(title: "更新下载失败", message: error.localizedDescription)
+            self.showAlert(
+              title: localized("Update download failed"), message: error.localizedDescription)
           }
         }
         self.refreshUI()
       })
     updateDownloader = downloader
-    showOperation("正在安全下载 TartR \(version)…")
+    showOperation(localized("Securely downloading TartR %@…", version))
     downloader.start(request: request)
   }
 
   private func presentVerifiedUpdate(at url: URL, version: String) {
     showWindow()
     let alert = NSAlert()
-    alert.messageText = "TartR \(version) 已安全下载"
-    alert.informativeText = "DMG 的文件大小和 SHA-256 均已验证。TartR 不会自动安装或执行更新。"
-    alert.addButton(withTitle: "打开 DMG")
-    alert.addButton(withTitle: "在 Finder 中显示")
-    alert.addButton(withTitle: "关闭")
+    alert.messageText = localized("TartR %@ was securely downloaded", version)
+    alert.informativeText = localized(
+      "The DMG passed file size and SHA-256 verification. TartR will not install or run the update automatically."
+    )
+    alert.addButton(withTitle: localized("Open DMG"))
+    alert.addButton(withTitle: localized("Show in Finder"))
+    alert.addButton(withTitle: localized("Close"))
     switch alert.runModal() {
     case .alertFirstButtonReturn:
       NSWorkspace.shared.open(url)
@@ -946,13 +994,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   @objc private func chooseTartExecutable() {
     guard operationProcess == nil, updateDownloader == nil, !syncInProgress else {
-      showAlert(title: "请稍后再选择 Tart", message: "等待当前 Tart 操作或状态同步完成后再修改可执行文件。")
+      showAlert(
+        title: localized("Choose Tart later"),
+        message: localized(
+          "Wait for the current Tart operation or state synchronization to finish before changing the executable."
+        ))
       return
     }
     let panel = NSOpenPanel()
-    panel.title = "选择 Tart 可执行文件"
-    panel.message = "选择可信来源且具有执行权限的 tart 文件。此路径只保存在本机。"
-    panel.prompt = "使用此 Tart"
+    panel.title = localized("Choose Tart Executable")
+    panel.message = localized(
+      "Choose an executable tart file from a trusted source. The path is stored only on this Mac.")
+    panel.prompt = localized("Use This Tart")
     panel.canChooseFiles = true
     panel.canChooseDirectories = false
     panel.allowsMultipleSelection = false
@@ -961,7 +1014,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     }
     guard panel.runModal() == .OK, let url = panel.url else { return }
     guard FileManager.default.isExecutableFile(atPath: url.path) else {
-      showAlert(title: "无法使用所选文件", message: "该文件不存在或没有执行权限。")
+      showAlert(
+        title: localized("Unable to use the selected file"),
+        message: localized("The file does not exist or is not executable."))
       return
     }
     validateAndSaveTartExecutable(url.standardizedFileURL)
@@ -969,11 +1024,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   @objc private func resetTartExecutable() {
     guard operationProcess == nil, updateDownloader == nil, !syncInProgress else {
-      showAlert(title: "请稍后再恢复自动检测", message: "等待当前 Tart 操作或状态同步完成后再修改可执行文件。")
+      showAlert(
+        title: localized("Restore automatic detection later"),
+        message: localized(
+          "Wait for the current Tart operation or state synchronization to finish before changing the executable."
+        ))
       return
     }
     UserDefaults.standard.removeObject(forKey: tartExecutablePathKey)
-    appendApplicationLog("已恢复自动检测 Tart 可执行文件。")
+    appendApplicationLog(localized("Restored automatic Tart executable detection."))
     resyncAfterTartExecutableChange()
   }
 
@@ -988,13 +1047,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       outputCapture.processDidStart()
     } catch {
       _ = outputCapture.finish()
-      showAlert(title: "无法运行所选文件", message: error.localizedDescription)
+      showAlert(
+        title: localized("Unable to run the selected file"), message: error.localizedDescription)
       return
     }
     operationProcess = process
     operationOutputCapture = outputCapture
     operationWasCancelled = false
-    showOperation("正在验证 Tart 可执行文件…")
+    showOperation(localized("Validating Tart executable…"))
 
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       let completed = ProcessDeadline.waitForExit(process, timeout: 5)
@@ -1013,16 +1073,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
           let detail = output.trimmingCharacters(in: .whitespacesAndNewlines)
           let reason =
             captured.wasTruncated
-            ? "所选文件的版本输出超过 1 MB 安全上限。"
+            ? localized("The selected file's version output exceeds the 1 MB safety limit.")
             : completed
-              ? (detail.isEmpty ? "所选文件没有返回可识别的 Tart 版本。" : String(detail.suffix(1000)))
-              : "所选文件执行 --version 超过 5 秒，验证已终止。"
-          self.showAlert(title: "所选文件不是可用的 Tart", message: reason)
+              ? (detail.isEmpty
+                ? localized("The selected file did not return a recognizable Tart version.")
+                : String(detail.suffix(1000)))
+              : localized(
+                "The selected file took more than 5 seconds to run --version and was terminated.")
+          self.showAlert(
+            title: localized("The selected file is not a usable Tart executable"), message: reason)
           return
         }
         UserDefaults.standard.set(url.path, forKey: tartExecutablePathKey)
         self.appendApplicationLog(
-          "已验证并选择自定义 Tart 可执行文件：\(url.path)（\(output.trimmingCharacters(in: .whitespacesAndNewlines))）"
+          localized(
+            "Validated and selected custom Tart executable: %@ (%@)", url.path,
+            output.trimmingCharacters(in: .whitespacesAndNewlines))
         )
         self.resyncAfterTartExecutableChange()
       }
@@ -1031,14 +1097,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   @objc private func cancelOperation() {
     if let updateDownloader {
-      operationLabel?.stringValue = "正在取消更新下载…"
+      operationLabel?.stringValue = localized("Cancelling update download…")
       cancelOperationButton?.isEnabled = false
       updateDownloader.cancel()
       return
     }
     guard let process = operationProcess else { return }
     operationWasCancelled = true
-    operationLabel?.stringValue = "正在取消操作…"
+    operationLabel?.stringValue = localized("Cancelling operation…")
     cancelOperationButton?.isEnabled = false
     process.interrupt()
     DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self, weak process] in
@@ -1051,7 +1117,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   @objc private func downloadImage() {
     guard tartInstalled else {
-      showAlert(title: "请先安装 Tart", message: "使用上方安装引导完成 Tart 安装后再下载镜像。")
+      showAlert(
+        title: localized("Install Tart first"),
+        message: localized("Use the installation guide above before downloading an image."))
       return
     }
 
@@ -1068,16 +1136,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     let accessory = labeledForm(
       [
-        ("官方镜像", popup),
-        ("本地名称", target),
-        ("镜像地址（可编辑）", source),
+        (localized("Official Image"), popup),
+        (localized("Local Name"), target),
+        (localized("Image Address (Editable)"), source),
       ], width: 470)
     let alert = NSAlert()
-    alert.messageText = "下载并克隆镜像"
-    alert.informativeText = "镜像通常约 25 GB，下载时间取决于网络速度。默认账号和密码均为 admin。"
+    alert.messageText = localized("Download and Clone Image")
+    alert.informativeText = localized(
+      "Images are typically about 25 GB. Download time depends on network speed. The default username and password are both admin."
+    )
     alert.accessoryView = accessory
-    alert.addButton(withTitle: "开始下载")
-    alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: localized("Start Download"))
+    alert.addButton(withTitle: localized("Cancel"))
     guard alert.runModal() == .alertFirstButtonReturn else {
       catalogTargetField = nil
       catalogSourceField = nil
@@ -1091,19 +1161,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     catalogSourceField = nil
     guard validNewVMName(name) else { return }
     guard !selectedSource.isEmpty else {
-      showAlert(title: "镜像地址无效", message: "请输入 OCI 镜像地址或本地源 VM 名称。")
+      showAlert(
+        title: localized("Invalid image address"),
+        message: localized("Enter an OCI image address or the name of a local source VM."))
       return
     }
     guard
       confirmStorageCapacity(
-        operation: "下载并克隆镜像",
+        operation: localized("Download and clone image"),
         operationBytes: 30 * 1_024 * 1_024 * 1_024,
         at: FileManager.default.homeDirectoryForCurrentUser,
         offersCacheCleanup: true)
     else { return }
     runManagedTartCommand(
       TartCommand.clone(source: selectedSource, name: name).arguments,
-      title: "正在下载 \(item.os) · \(item.kind)…"
+      title: localized("Downloading %@ · %@…", item.os, item.kind)
     ) { [weak self] success, _ in
       if success { self?.syncAndSelect(name: name) }
     }
@@ -1120,50 +1192,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     let menu = NSMenu()
     let state = selectedConfiguration.flatMap { states[$0.id] } ?? .unknown
     addMenuItem(
-      "查看详细配置…", #selector(showSelectedDetails), to: menu,
+      localized("View Details…"), #selector(showSelectedDetails), to: menu,
       enabled: selectedConfiguration != nil)
     menu.addItem(.separator())
-    addMenuItem("导入 .tvm 归档…", #selector(importVMArchive), to: menu)
+    addMenuItem(localized("Import .tvm Archive…"), #selector(importVMArchive), to: menu)
     addMenuItem(
-      "导出为 .tvm 归档…", #selector(exportSelectedVM), to: menu,
+      localized("Export as .tvm Archive…"), #selector(exportSelectedVM), to: menu,
       enabled: selectedConfiguration != nil && !state.isRunning
         && selectedConfiguration.map { discoveredNames.contains($0.name) } == true)
     addMenuItem(
-      "复制虚拟机…", #selector(cloneSelectedVM), to: menu,
+      localized("Clone VM…"), #selector(cloneSelectedVM), to: menu,
       enabled: selectedConfiguration != nil && !state.isRunning)
     addMenuItem(
-      "重命名…", #selector(renameSelectedVM), to: menu,
+      localized("Rename…"), #selector(renameSelectedVM), to: menu,
       enabled: selectedConfiguration != nil && !state.isRunning)
     addMenuItem(
-      "调整配置…", #selector(configureSelectedVM), to: menu,
+      localized("Configure…"), #selector(configureSelectedVM), to: menu,
       enabled: selectedConfiguration != nil && !state.isRunning)
     addMenuItem(
-      "启动选项…", #selector(configureSelectedVMRunOptions), to: menu,
+      localized("Run Options…"), #selector(configureSelectedVMRunOptions), to: menu,
       enabled: selectedConfiguration != nil)
     addMenuItem(
-      "推送到 OCI Registry…", #selector(pushSelectedVM), to: menu,
+      localized("Push to OCI Registry…"), #selector(pushSelectedVM), to: menu,
       enabled: selectedConfiguration != nil && !state.isRunning)
     #if arch(arm64)
       addMenuItem(
-        "以可挂起模式启动一次", #selector(startSelectedVMSuspendable), to: menu,
+        localized("Run Once in Suspendable Mode"), #selector(startSelectedVMSuspendable), to: menu,
         enabled: selectedConfiguration != nil && !state.isRunning)
     #endif
     menu.addItem(.separator())
-    addMenuItem("复制 IP 地址", #selector(copySelectedIP), to: menu, enabled: state.isRunning)
     addMenuItem(
-      "复制 SSH 命令并打开终端…", #selector(copySSHCommandAndOpenTerminal), to: menu,
+      localized("Copy IP Address"), #selector(copySelectedIP), to: menu, enabled: state.isRunning)
+    addMenuItem(
+      localized("Copy SSH Command and Open Terminal…"), #selector(copySSHCommandAndOpenTerminal),
+      to: menu,
       enabled: selectedConfiguration != nil && state.isRunning)
     addMenuItem(
-      "在虚拟机内执行命令…", #selector(executeCommandInSelectedVM), to: menu,
+      localized("Execute Command in VM…"), #selector(executeCommandInSelectedVM), to: menu,
       enabled: selectedConfiguration != nil && state.isRunning)
-    addMenuItem("挂起虚拟机", #selector(suspendSelectedVM), to: menu, enabled: state.isRunning)
+    addMenuItem(
+      localized("Suspend VM"), #selector(suspendSelectedVM), to: menu, enabled: state.isRunning)
     menu.addItem(.separator())
-    addMenuItem("从最新 IPSW 创建 macOS VM…", #selector(createMacVM), to: menu)
-    addMenuItem("创建空白 Linux VM…", #selector(createLinuxVM), to: menu)
-    addMenuItem("清理 Tart 下载缓存…", #selector(pruneCaches), to: menu)
+    addMenuItem(localized("Create macOS VM from Latest IPSW…"), #selector(createMacVM), to: menu)
+    addMenuItem(localized("Create Blank Linux VM…"), #selector(createLinuxVM), to: menu)
+    addMenuItem(localized("Prune Tart Download Cache…"), #selector(pruneCaches), to: menu)
     menu.addItem(.separator())
     addMenuItem(
-      "删除虚拟机和磁盘…", #selector(deleteVMAndDisk), to: menu,
+      localized("Delete VM and Disk…"), #selector(deleteVMAndDisk), to: menu,
       enabled: selectedConfiguration != nil && !state.isRunning
         && selectedConfiguration.map { discoveredNames.contains($0.name) } == true)
     menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
@@ -1173,17 +1248,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     guard let configuration = selectedConfiguration else { return }
     guard
       let values = promptForValues(
-        title: "复制虚拟机", message: "使用 APFS 写时复制创建本地副本。",
+        title: localized("Clone VM"),
+        message: localized("Create a local copy using APFS copy-on-write."),
         fields: [
-          ("源虚拟机", configuration.name, false),
-          ("新名称", "\(configuration.name)-copy", true),
+          (localized("Source VM"), configuration.name, false),
+          (localized("New Name"), "\(configuration.name)-copy", true),
         ])
     else { return }
     let newName = values[1]
     guard validNewVMName(newName) else { return }
     runManagedTartCommand(
       TartCommand.clone(source: configuration.name, name: newName).arguments,
-      title: "正在复制 \(configuration.name)…"
+      title: localized("Cloning %@…", configuration.name)
     ) { [weak self] success, _ in
       if success { self?.syncAndSelect(name: newName) }
     }
@@ -1191,8 +1267,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   @objc private func importVMArchive() {
     let panel = NSOpenPanel()
-    panel.title = "导入 Tart 虚拟机归档"
-    panel.message = "选择由 tart export 创建的 .tvm 文件。"
+    panel.title = localized("Import Tart VM Archive")
+    panel.message = localized("Choose a .tvm file created by tart export.")
     panel.allowedContentTypes = [UTType(filenameExtension: "tvm") ?? .data]
     panel.allowsMultipleSelection = false
     panel.canChooseDirectories = false
@@ -1201,9 +1277,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     let suggestedName = archiveURL.deletingPathExtension().lastPathComponent
     guard
       let values = promptForValues(
-        title: "导入虚拟机",
-        message: "归档：\(archiveURL.lastPathComponent)",
-        fields: [("本地名称", suggestedName, true)])
+        title: localized("Import VM"),
+        message: localized("Archive: %@", archiveURL.lastPathComponent),
+        fields: [(localized("Local Name"), suggestedName, true)])
     else { return }
     let name = values[0]
     guard validNewVMName(name) else { return }
@@ -1215,14 +1291,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       20 * 1_024 * 1_024 * 1_024)
     guard
       confirmStorageCapacity(
-        operation: "导入虚拟机归档",
+        operation: localized("Import VM archive"),
         operationBytes: estimatedImportBytes,
         at: FileManager.default.homeDirectoryForCurrentUser,
         offersCacheCleanup: true)
     else { return }
     runManagedTartCommand(
       TartCommand.importArchive(path: archiveURL.path, name: name).arguments,
-      title: "正在导入 \(archiveURL.lastPathComponent)…"
+      title: localized("Importing %@…", archiveURL.lastPathComponent)
     ) { [weak self] success, _ in
       if success { self?.syncAndSelect(name: name) }
     }
@@ -1235,8 +1311,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     else { return }
 
     let panel = NSSavePanel()
-    panel.title = "导出 Tart 虚拟机归档"
-    panel.message = "导出可能需要较长时间，并占用接近虚拟机实际大小的磁盘空间。"
+    panel.title = localized("Export Tart VM Archive")
+    panel.message = localized(
+      "Exporting may take a long time and use disk space close to the VM's actual size.")
     panel.allowedContentTypes = [UTType(filenameExtension: "tvm") ?? .data]
     panel.canCreateDirectories = true
     panel.nameFieldStringValue = "\(configuration.name).tvm"
@@ -1244,7 +1321,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     let estimatedGB = max(infoByName[configuration.name]?.size ?? 20, 1)
     guard
       confirmStorageCapacity(
-        operation: "导出虚拟机归档",
+        operation: localized("Export VM archive"),
         operationBytes: UInt64(estimatedGB) * 1_024 * 1_024 * 1_024,
         at: archiveURL.deletingLastPathComponent(),
         offersCacheCleanup: false)
@@ -1252,7 +1329,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     runManagedTartCommand(
       TartCommand.exportArchive(name: configuration.name, path: archiveURL.path).arguments,
-      title: "正在导出 \(configuration.name)…"
+      title: localized("Exporting %@…", configuration.name)
     ) { success, _ in
       if success { NSWorkspace.shared.activateFileViewerSelecting([archiveURL]) }
     }
@@ -1262,7 +1339,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     guard let configuration = selectedConfiguration else { return }
     runManagedTartCommand(
       TartCommand.get(name: configuration.name).arguments,
-      title: "正在读取 \(configuration.name) 配置…", showsSuccessAlert: false
+      title: localized("Reading %@ configuration…", configuration.name), showsSuccessAlert: false
     ) { [weak self] success, output in
       guard success, let self else { return }
       var details = output.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1276,7 +1353,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       }
       self.showTextViewer(
         title: configuration.name,
-        text: details.isEmpty ? "Tart 未返回配置内容。" : details)
+        text: details.isEmpty ? localized("Tart returned no configuration details.") : details)
     }
   }
 
@@ -1284,16 +1361,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     guard let configuration = selectedConfiguration else { return }
     guard
       let values = promptForValues(
-        title: "重命名虚拟机", message: "虚拟机必须处于停止状态。",
+        title: localized("Rename VM"), message: localized("The VM must be stopped."),
         fields: [
-          ("当前名称", configuration.name, false),
-          ("新名称", configuration.name, true),
+          (localized("Current Name"), configuration.name, false),
+          (localized("New Name"), configuration.name, true),
         ])
     else { return }
     let newName = values[1]
     guard newName != configuration.name, validNewVMName(newName) else { return }
     runManagedTartCommand(
-      TartCommand.rename(name: configuration.name, newName: newName).arguments, title: "正在重命名…"
+      TartCommand.rename(name: configuration.name, newName: newName).arguments,
+      title: localized("Renaming…")
     ) { [weak self] success, _ in
       guard success, let self,
         let index = self.configurations.firstIndex(where: { $0.id == configuration.id })
@@ -1308,11 +1386,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     guard let configuration = selectedConfiguration else { return }
     guard
       let values = promptForValues(
-        title: "调整 \(configuration.name)",
-        message: "只填写需要修改的项目。磁盘只能扩容，不能缩小。",
+        title: localized("Configure %@", configuration.name),
+        message: localized(
+          "Fill in only the fields you want to change. Disks can only grow, not shrink."),
         fields: [
-          ("CPU 核数", "", true), ("内存（MB）", "", true),
-          ("显示分辨率", "", true), ("磁盘大小（GB）", "", true),
+          (localized("CPU Cores"), "", true), (localized("Memory (MB)"), "", true),
+          (localized("Display Resolution"), "", true), (localized("Disk Size (GB)"), "", true),
         ]
       )
     else { return }
@@ -1323,16 +1402,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     case .valid:
       break
     case .invalidCPU:
-      showAlert(title: "CPU 配置无效", message: "CPU 核数必须是 1 至 65535 之间的整数。")
+      showAlert(
+        title: localized("Invalid CPU configuration"),
+        message: localized("CPU cores must be an integer from 1 to 65535."))
       return
     case .invalidMemory:
-      showAlert(title: "内存配置无效", message: "内存必须是以 MB 为单位的正整数。")
+      showAlert(
+        title: localized("Invalid memory configuration"),
+        message: localized("Memory must be a positive integer in MB."))
       return
     case .invalidDisplay:
-      showAlert(title: "显示配置无效", message: "请输入 WIDTHxHEIGHT、WIDTHxHEIGHTpt 或 WIDTHxHEIGHTpx。")
+      showAlert(
+        title: localized("Invalid display configuration"),
+        message: localized("Enter WIDTHxHEIGHT, WIDTHxHEIGHTpt, or WIDTHxHEIGHTpx."))
       return
     case .invalidDiskSize:
-      showAlert(title: "磁盘配置无效", message: "磁盘大小必须是 1 至 65535 之间的整数 GB。")
+      showAlert(
+        title: localized("Invalid disk configuration"),
+        message: localized("Disk size must be an integer from 1 to 65535 GB."))
       return
     }
 
@@ -1344,7 +1431,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       diskSize: values[3].isEmpty ? nil : values[3]
     ).arguments
     guard arguments.count > 2 else { return }
-    runManagedTartCommand(arguments, title: "正在更新虚拟机配置…") { [weak self] success, _ in
+    runManagedTartCommand(arguments, title: localized("Updating VM configuration…")) {
+      [weak self] success, _ in
       if success { self?.syncTartState() }
     }
   }
@@ -1353,22 +1441,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     guard let configuration = selectedConfiguration else { return }
     let options = configuration.runOptions
     let headless = NSButton(
-      checkboxWithTitle: "无图形界面（--no-graphics）", target: nil, action: nil)
+      checkboxWithTitle: localized("Headless (--no-graphics)"), target: nil, action: nil)
     headless.state = options.headless ? .on : .off
     let noAudio = NSButton(
-      checkboxWithTitle: "禁用音频直通（--no-audio）", target: nil, action: nil)
+      checkboxWithTitle: localized("Disable Audio Passthrough (--no-audio)"), target: nil,
+      action: nil)
     noAudio.state = options.noAudio ? .on : .off
     let noClipboard = NSButton(
-      checkboxWithTitle: "禁用主机与虚拟机剪贴板共享（--no-clipboard）", target: nil, action: nil)
+      checkboxWithTitle: localized("Disable Host–VM Clipboard Sharing (--no-clipboard)"),
+      target: nil,
+      action: nil)
     noClipboard.state = options.noClipboard ? .on : .off
     let suspendable = NSButton(
-      checkboxWithTitle: "使用可挂起模式（--suspendable）", target: nil, action: nil)
+      checkboxWithTitle: localized("Use Suspendable Mode (--suspendable)"), target: nil, action: nil
+    )
     #if arch(arm64)
       suspendable.state = options.suspendable ? .on : .off
     #else
       suspendable.state = .off
       suspendable.isEnabled = false
-      suspendable.toolTip = "可挂起模式仅适用于 Apple Silicon"
+      suspendable.toolTip = localized("Suspendable mode is available only on Apple Silicon")
     #endif
 
     let stack = NSStackView(views: [headless, noAudio, noClipboard, suspendable])
@@ -1377,11 +1469,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     stack.spacing = 8
     stack.frame = NSRect(x: 0, y: 0, width: 410, height: 112)
     let alert = NSAlert()
-    alert.messageText = "\(configuration.name) 的启动选项"
-    alert.informativeText = "这些选项会用于“启动”、双击启动和打开 TartR 时自动启动。"
+    alert.messageText = localized("Run Options for %@", configuration.name)
+    alert.informativeText = localized(
+      "These options apply to Run, double-clicking, and automatic startup when TartR opens.")
     alert.accessoryView = stack
-    alert.addButton(withTitle: "保存")
-    alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: localized("Save"))
+    alert.addButton(withTitle: localized("Cancel"))
     guard alert.runModal() == .alertFirstButtonReturn,
       let index = configurations.firstIndex(where: { $0.id == configuration.id })
     else { return }
@@ -1402,39 +1495,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     guard let configuration = selectedConfiguration else { return }
     guard
       let values = promptForValues(
-        title: "推送到 OCI Registry",
-        message: "Registry 凭据由 Tart、Docker credential helper 或环境变量管理，TartR 不保存密码。",
+        title: localized("Push to OCI Registry"),
+        message: localized(
+          "Registry credentials are managed by Tart, Docker credential helpers, or environment variables. TartR does not store passwords."
+        ),
         fields: [
-          ("本地虚拟机", configuration.name, false),
-          ("远程地址", "ghcr.io/组织/镜像:latest", true),
+          (localized("Local VM"), configuration.name, false),
+          (localized("Remote Address"), localized("ghcr.io/organization/image:latest"), true),
         ])
     else { return }
     let remoteName = values[1].trimmingCharacters(in: .whitespacesAndNewlines)
     guard !remoteName.isEmpty, remoteName.contains("/") else {
-      showAlert(title: "远程地址无效", message: "请输入完整 OCI 地址，例如 ghcr.io/acme/macos:latest。")
+      showAlert(
+        title: localized("Invalid remote address"),
+        message: localized("Enter a complete OCI address, such as ghcr.io/acme/macos:latest."))
       return
     }
     let confirmation = NSAlert()
     confirmation.alertStyle = .warning
-    confirmation.messageText = "推送 \(configuration.name)？"
-    confirmation.informativeText = "将向 \(remoteName) 上传虚拟机镜像，可能消耗大量时间和网络流量。"
-    confirmation.addButton(withTitle: "开始推送")
-    confirmation.addButton(withTitle: "取消")
+    confirmation.messageText = localized("Push %@?", configuration.name)
+    confirmation.informativeText = localized(
+      "The VM image will be uploaded to %@. This may take significant time and network bandwidth.",
+      remoteName)
+    confirmation.addButton(withTitle: localized("Start Push"))
+    confirmation.addButton(withTitle: localized("Cancel"))
     guard confirmation.runModal() == .alertFirstButtonReturn else { return }
     runManagedTartCommand(
       TartCommand.push(name: configuration.name, remoteName: remoteName).arguments,
-      title: "正在推送 \(configuration.name)…"
+      title: localized("Pushing %@…", configuration.name)
     ) { _, _ in }
   }
 
   @objc private func pruneCaches() {
     guard
       let values = promptForValues(
-        title: "清理 Tart 下载缓存",
-        message: "仅清理可重新下载的 OCI/IPSW 缓存，不删除本地虚拟机。至少填写一个条件。",
+        title: localized("Prune Tart Download Cache"),
+        message: localized(
+          "Only re-downloadable OCI/IPSW cache data is removed. Local VMs are not deleted. Enter at least one condition."
+        ),
         fields: [
-          ("早于天数", "30", true),
-          ("缓存上限（GB）", "", true),
+          (localized("Older Than (Days)"), "30", true),
+          (localized("Cache Limit (GB)"), "", true),
         ])
     else { return }
     let olderThan = values[0]
@@ -1443,51 +1544,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       spaceBudget.isEmpty || UInt(spaceBudget) != nil,
       !olderThan.isEmpty || !spaceBudget.isEmpty
     else {
-      showAlert(title: "清理条件无效", message: "请至少填写一个非负整数条件。")
+      showAlert(
+        title: localized("Invalid prune conditions"),
+        message: localized("Enter at least one non-negative integer condition."))
       return
     }
     let confirmation = NSAlert()
     confirmation.alertStyle = .warning
-    confirmation.messageText = "确认清理 Tart 缓存？"
-    confirmation.informativeText = "被删除的 OCI 镜像层或 IPSW 需要在下次使用时重新下载。"
-    confirmation.addButton(withTitle: "开始清理")
-    confirmation.addButton(withTitle: "取消")
+    confirmation.messageText = localized("Prune Tart cache?")
+    confirmation.informativeText = localized(
+      "Removed OCI image layers or IPSW files must be downloaded again when next used.")
+    confirmation.addButton(withTitle: localized("Start Pruning"))
+    confirmation.addButton(withTitle: localized("Cancel"))
     guard confirmation.runModal() == .alertFirstButtonReturn else { return }
     runManagedTartCommand(
       TartCommand.pruneCaches(
         olderThan: olderThan.isEmpty ? nil : olderThan,
         spaceBudget: spaceBudget.isEmpty ? nil : spaceBudget
       ).arguments,
-      title: "正在清理 Tart 缓存…"
+      title: localized("Pruning Tart cache…")
     ) { _, _ in }
   }
 
   @objc private func copySelectedIP() {
     guard let configuration = selectedConfiguration else { return }
     runManagedTartCommand(
-      TartCommand.ip(name: configuration.name, wait: 5).arguments, title: "正在获取 IP 地址…",
+      TartCommand.ip(name: configuration.name, wait: 5).arguments,
+      title: localized("Getting IP address…"),
       showsSuccessAlert: false
     ) { success, output in
       guard success else { return }
       let ip = output.trimmingCharacters(in: .whitespacesAndNewlines)
       NSPasteboard.general.clearContents()
       NSPasteboard.general.setString(ip, forType: .string)
-      self.showAlert(title: "IP 地址已复制", message: ip)
+      self.showAlert(title: localized("IP address copied"), message: ip)
     }
   }
 
   @objc private func copySSHCommandAndOpenTerminal() {
     guard let configuration = selectedConfiguration,
       let values = promptForValues(
-        title: "连接到 \(configuration.name)",
-        message: "TartR 会记住此 VM 的用户名，复制安全的 SSH 命令并打开终端，但不会自动执行命令。",
-        fields: [("SSH 用户名", configuration.sshUsername, true)])
+        title: localized("Connect to %@", configuration.name),
+        message: localized(
+          "TartR remembers this VM's username, copies a safe SSH command, and opens Terminal without executing the command."
+        ),
+        fields: [(localized("SSH Username"), configuration.sshUsername, true)])
     else { return }
     let username = values[0]
     guard SSHConnectionCommand.isValidUsername(username) else {
       showAlert(
-        title: "SSH 用户名无效",
-        message: "请输入 1–64 个 ASCII 字符；以字母或下划线开头，之后仅可使用字母、数字、下划线、连字符或句点。")
+        title: localized("Invalid SSH username"),
+        message: localized(
+          "Enter 1–64 ASCII characters, starting with a letter or underscore, followed only by letters, digits, underscores, hyphens, or periods."
+        ))
       return
     }
     guard let index = configurations.firstIndex(where: { $0.id == configuration.id }) else {
@@ -1497,30 +1606,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     saveConfigurations()
 
     runManagedTartCommand(
-      TartCommand.ip(name: configuration.name, wait: 5).arguments, title: "正在获取 IP 地址…",
+      TartCommand.ip(name: configuration.name, wait: 5).arguments,
+      title: localized("Getting IP address…"),
       showsSuccessAlert: false
     ) { success, output in
       guard success else { return }
       let host = output.trimmingCharacters(in: .whitespacesAndNewlines)
       guard let command = SSHConnectionCommand.make(username: username, host: host) else {
         self.showAlert(
-          title: "无法生成 SSH 命令",
-          message: "Tart 返回了无法安全识别的地址。请刷新状态后重试。")
+          title: localized("Unable to create SSH command"),
+          message: localized(
+            "Tart returned an address that could not be safely recognized. Refresh the status and try again."
+          ))
         return
       }
       NSPasteboard.general.clearContents()
       guard NSPasteboard.general.setString(command, forType: .string) else {
-        self.showAlert(title: "无法复制 SSH 命令", message: "系统剪贴板当前不可用，请稍后重试。")
+        self.showAlert(
+          title: localized("Unable to copy SSH command"),
+          message: localized("The system clipboard is unavailable. Try again later."))
         return
       }
       self.showAlert(
-        title: "SSH 命令已复制",
-        message: "请在终端按 ⌘V 粘贴并回车：\n\n\(command)")
+        title: localized("SSH command copied"),
+        message: localized("Press ⌘V in Terminal, then press Return:\n\n%@", command))
       guard
         NSWorkspace.shared.open(
           URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"))
       else {
-        self.showAlert(title: "无法打开终端", message: "SSH 命令仍在剪贴板中，可手动打开终端后粘贴。")
+        self.showAlert(
+          title: localized("Unable to open Terminal"),
+          message: localized(
+            "The SSH command is still on the clipboard. Open Terminal manually and paste it."))
         return
       }
     }
@@ -1529,7 +1646,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   @objc private func suspendSelectedVM() {
     guard let configuration = selectedConfiguration else { return }
     runManagedTartCommand(
-      TartCommand.suspend(name: configuration.name).arguments, title: "正在挂起 \(configuration.name)…"
+      TartCommand.suspend(name: configuration.name).arguments,
+      title: localized("Suspending %@…", configuration.name)
     ) { [weak self] success, _ in
       if success { self?.syncTartState() }
     }
@@ -1541,30 +1659,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       ProcessInfo.processInfo.isOperatingSystemAtLeast(
         OperatingSystemVersion(majorVersion: 14, minorVersion: 0, patchVersion: 0))
     else {
-      showAlert(title: "需要 macOS 14 或更高版本", message: "tart exec 在宿主机 macOS 14 Sonoma 起可用。")
+      showAlert(
+        title: localized("macOS 14 or later is required"),
+        message: localized("tart exec is available on host macOS 14 Sonoma or later."))
       return
     }
     guard
       let values = promptForValues(
-        title: "在 \(configuration.name) 内执行命令",
-        message: "需要 VM 内运行 Tart Guest Agent。命令仅在客体 VM 的 /bin/zsh 中执行，不经过宿主机 shell。",
-        fields: [("Shell 命令", "uname -a", true)])
+        title: localized("Execute Command in %@", configuration.name),
+        message: localized(
+          "Tart Guest Agent must be running in the VM. The command runs only in the guest VM's /bin/zsh and never through the host shell."
+        ),
+        fields: [(localized("Shell Command"), "uname -a", true)])
     else { return }
     let command = values[0]
     guard GuestShellCommandValidation.validate(command) == .valid else {
-      showAlert(title: "命令无效", message: "命令不能为空、包含空字符或超过 4096 字节。")
+      showAlert(
+        title: localized("Invalid command"),
+        message: localized(
+          "The command cannot be empty, contain a null character, or exceed 4096 bytes."))
       return
     }
     runManagedTartCommand(
       TartCommand.execShell(name: configuration.name, command: command).arguments,
-      title: "正在 \(configuration.name) 内执行命令…",
+      title: localized("Executing command in %@…", configuration.name),
       showsSuccessAlert: false,
       showsFailureAlert: false
     ) { [weak self] success, output in
       guard let self else { return }
-      let content = output.isEmpty ? "（命令没有输出）" : output
+      let content = output.isEmpty ? localized("(The command produced no output)") : output
       self.showTextViewer(
-        title: success ? "命令执行完成" : "命令执行失败",
+        title: success ? localized("Command Completed") : localized("Command Failed"),
         text: "$ \(command)\n\n\(content)")
     }
   }
@@ -1585,17 +1710,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   private func createBlankVM(macOS: Bool) {
     #if arch(x86_64)
       if macOS {
-        showAlert(title: "需要 Apple Silicon", message: "Tart 只能在 Apple Silicon Mac 上创建 macOS VM。")
+        showAlert(
+          title: localized("Apple Silicon is required"),
+          message: localized("Tart can create macOS VMs only on Apple Silicon Macs."))
         return
       }
     #endif
     let defaultName = macOS ? "macos-vanilla" : "linux-vm"
     guard
       let values = promptForValues(
-        title: macOS ? "从最新 IPSW 创建 macOS VM" : "创建空白 Linux VM",
+        title: macOS
+          ? localized("Create macOS VM from Latest IPSW") : localized("Create Blank Linux VM"),
         message: macOS
-          ? "Tart 将下载 Apple 最新支持的 IPSW，之后需要手动完成系统安装。" : "创建后请通过 tart run --disk 挂载安装镜像。",
-        fields: [("虚拟机名称", defaultName, true), ("磁盘大小（GB）", "50", true)]
+          ? localized(
+            "Tart will download Apple's latest supported IPSW. You must then complete system installation manually."
+          ) : localized("After creation, mount an installation image with tart run --disk."),
+        fields: [
+          (localized("VM Name"), defaultName, true), (localized("Disk Size (GB)"), "50", true),
+        ]
       )
     else { return }
     guard validNewVMName(values[0]) else { return }
@@ -1603,12 +1735,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       VMResourceValidation.validate(cpu: "", memory: "", display: "", diskSize: values[1])
         == .valid
     else {
-      showAlert(title: "磁盘大小无效", message: "请输入 1 至 65535 GB 之间的整数。")
+      showAlert(
+        title: localized("Invalid disk size"),
+        message: localized("Enter an integer from 1 to 65535 GB."))
       return
     }
     guard
       confirmStorageCapacity(
-        operation: macOS ? "下载 IPSW 并创建 macOS VM" : "创建 Linux VM",
+        operation: macOS
+          ? localized("Download IPSW and create macOS VM") : localized("Create Linux VM"),
         operationBytes: UInt64(macOS ? 30 : 5) * 1_024 * 1_024 * 1_024,
         at: FileManager.default.homeDirectoryForCurrentUser,
         offersCacheCleanup: true)
@@ -1617,7 +1752,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       macOS
       ? TartCommand.createMac(name: values[0], diskSize: values[1]).arguments
       : TartCommand.createLinux(name: values[0], diskSize: values[1]).arguments
-    runManagedTartCommand(arguments, title: macOS ? "正在下载 IPSW 并创建 VM…" : "正在创建 Linux VM…") {
+    runManagedTartCommand(
+      arguments,
+      title: macOS
+        ? localized("Downloading IPSW and creating VM…") : localized("Creating Linux VM…")
+    ) {
       [weak self] success, _ in
       if success { self?.syncAndSelect(name: values[0]) }
     }
@@ -1627,21 +1766,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     guard let configuration = selectedConfiguration else { return }
     let alert = NSAlert()
     alert.alertStyle = .critical
-    alert.messageText = "永久删除 \(configuration.name)？"
-    alert.informativeText = "将执行 tart delete，虚拟机配置和磁盘数据无法恢复。请输入虚拟机名称确认。"
+    alert.messageText = localized("Permanently delete %@?", configuration.name)
+    alert.informativeText = localized(
+      "This runs tart delete. The VM configuration and disk data cannot be recovered. Enter the VM name to confirm."
+    )
     let confirmationField = NSTextField()
     confirmationField.placeholderString = configuration.name
     confirmationField.frame = NSRect(x: 0, y: 0, width: 360, height: 24)
     alert.accessoryView = confirmationField
-    alert.addButton(withTitle: "永久删除")
-    alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: localized("Delete Permanently"))
+    alert.addButton(withTitle: localized("Cancel"))
     guard alert.runModal() == .alertFirstButtonReturn else { return }
     guard confirmationField.stringValue == configuration.name else {
-      showAlert(title: "名称不匹配", message: "未删除任何数据。")
+      showAlert(title: localized("Name does not match"), message: localized("No data was deleted."))
       return
     }
     runManagedTartCommand(
-      TartCommand.delete(name: configuration.name).arguments, title: "正在删除 \(configuration.name)…"
+      TartCommand.delete(name: configuration.name).arguments,
+      title: localized("Deleting %@…", configuration.name)
     ) { [weak self] success, _ in
       guard success, let self else { return }
       self.configurations.removeAll { $0.id == configuration.id }
@@ -1660,7 +1802,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     NSApp.orderFrontStandardAboutPanel(options: [
       .applicationName: "TartR",
       .credits: NSAttributedString(
-        string: "A native macOS manager for Tart virtual machines.\nhttps://tart.run/"),
+        string: localized("A native macOS manager for Tart virtual machines.\nhttps://tart.run/")),
     ])
   }
 
@@ -1675,8 +1817,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   @objc private func exportDiagnostics() {
     let panel = NSSavePanel()
-    panel.title = "导出 TartR 诊断信息"
-    panel.message = "报告不包含虚拟机名称、日志内容或 Registry 凭据。"
+    panel.title = localized("Export TartR Diagnostics")
+    panel.message = localized(
+      "The report does not contain VM names, log contents, or registry credentials.")
     panel.allowedContentTypes = [.plainText]
     panel.canCreateDirectories = true
     let stamp = ISO8601DateFormatter().string(from: Date())
@@ -1689,7 +1832,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       try Data(report.utf8).write(to: url, options: .atomic)
       NSWorkspace.shared.activateFileViewerSelecting([url])
     } catch {
-      showAlert(title: "无法导出诊断信息", message: error.localizedDescription)
+      showAlert(
+        title: localized("Unable to export diagnostics"), message: error.localizedDescription)
     }
   }
 
@@ -1702,13 +1846,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
     guard let data = try? encoder.encode(document) else {
-      showAlert(title: "无法导出设置", message: "虚拟机设置无法编码。")
+      showAlert(
+        title: localized("Unable to export settings"),
+        message: localized("The VM settings could not be encoded."))
       return
     }
 
     let panel = NSSavePanel()
-    panel.title = "导出 TartR 设置"
-    panel.message = "设置文件包含 VM 名称、启动选项和 SSH 用户名，但不包含日志或 Registry 凭据。"
+    panel.title = localized("Export TartR Settings")
+    panel.message = localized(
+      "The settings file contains VM names, run options, and SSH usernames, but no logs or registry credentials."
+    )
     panel.allowedContentTypes = [.json]
     panel.canCreateDirectories = true
     panel.nameFieldStringValue = "TartR-Settings.json"
@@ -1717,7 +1865,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       try data.write(to: url, options: .atomic)
       NSWorkspace.shared.activateFileViewerSelecting([url])
     } catch {
-      showAlert(title: "无法导出设置", message: error.localizedDescription)
+      showAlert(title: localized("Unable to export settings"), message: error.localizedDescription)
     }
   }
 
@@ -1725,12 +1873,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     guard operationProcess == nil, updateDownloader == nil,
       !runtimes.values.contains(where: { $0.process.isRunning })
     else {
-      showAlert(title: "暂时无法导入设置", message: "请先等待任务结束并停止所有由 TartR 启动的虚拟机。")
+      showAlert(
+        title: localized("Unable to import settings right now"),
+        message: localized("Wait for active tasks to finish and stop all VMs started by TartR."))
       return
     }
     let panel = NSOpenPanel()
-    panel.title = "导入 TartR 设置"
-    panel.message = "选择由 TartR 导出的 JSON 设置文件。"
+    panel.title = localized("Import TartR Settings")
+    panel.message = localized("Choose a JSON settings file exported by TartR.")
     panel.allowedContentTypes = [.json]
     panel.allowsMultipleSelection = false
     panel.canChooseDirectories = false
@@ -1738,33 +1888,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     guard let data = try? Data(contentsOf: url), data.count <= 5 * 1024 * 1024,
       let document = try? JSONDecoder().decode(TartRSettingsDocument.self, from: data)
     else {
-      showAlert(title: "设置文件无效", message: "文件无法读取、超过 5 MB，或不是有效的 TartR 设置。")
+      showAlert(
+        title: localized("Invalid settings file"),
+        message: localized(
+          "The file cannot be read, exceeds 5 MB, or is not a valid TartR settings file."))
       return
     }
     switch TartRSettingsValidation.validate(document) {
     case .valid:
       break
     case .unsupportedSchema(let version):
-      showAlert(title: "设置版本不受支持", message: "文件使用设置格式版本 \(version)，当前 TartR 无法导入。")
+      showAlert(
+        title: localized("Unsupported settings version"),
+        message: localized(
+          "The file uses settings format version %d, which this TartR cannot import.", version))
       return
     case .duplicateID, .duplicateName:
-      showAlert(title: "设置文件有冲突", message: "文件包含重复的 VM 标识或名称。")
+      showAlert(
+        title: localized("Conflicting settings"),
+        message: localized("The file contains duplicate VM identifiers or names."))
       return
     case .invalidName:
-      showAlert(title: "设置文件有无效名称", message: "VM 名称不能为空、包含 / 或带有前后空白。")
+      showAlert(
+        title: localized("Invalid VM name in settings"),
+        message: localized(
+          "VM names cannot be empty, contain /, or have leading or trailing whitespace."))
       return
     case .invalidSSHUsername:
-      showAlert(title: "设置文件有无效 SSH 用户名", message: "SSH 用户名包含不安全字符或长度不合法。")
+      showAlert(
+        title: localized("Invalid SSH username in settings"),
+        message: localized("An SSH username contains unsafe characters or has an invalid length."))
       return
     }
 
     let confirmation = NSAlert()
     confirmation.alertStyle = .warning
-    confirmation.messageText = "导入 \(document.configurations.count) 台 VM 的设置？"
+    confirmation.messageText = localized(
+      "Import settings for %d VM(s)?", document.configurations.count)
     confirmation.informativeText =
-      "将替换当前保存的 \(configurations.count) 条设置。TartR 会自动保留当前有效配置作为备份，并重新发现本地 VM。"
-    confirmation.addButton(withTitle: "导入并替换")
-    confirmation.addButton(withTitle: "取消")
+      localized(
+        "This replaces %d currently saved setting(s). TartR will back up the current valid configuration and rediscover local VMs.",
+        configurations.count)
+    confirmation.addButton(withTitle: localized("Import and Replace"))
+    confirmation.addButton(withTitle: localized("Cancel"))
     guard confirmation.runModal() == .alertFirstButtonReturn else { return }
 
     configurations = document.configurations
@@ -1780,21 +1946,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   @objc private func showEnvironmentInfo() {
     if !tartInstalled {
-      showTextViewer(title: "运行环境", text: environmentReport(tartVersion: "未安装"))
+      showTextViewer(
+        title: localized("Runtime Environment"),
+        text: environmentReport(tartVersion: localized("Not installed")))
       return
     }
     runManagedTartCommand(
       TartCommand.version.arguments,
-      title: "正在读取 Tart 版本…",
+      title: localized("Reading Tart version…"),
       showsSuccessAlert: false,
       showsFailureAlert: false
     ) { [weak self] success, output in
       guard let self else { return }
       let value = output.trimmingCharacters(in: .whitespacesAndNewlines)
       self.showTextViewer(
-        title: "运行环境",
+        title: localized("Runtime Environment"),
         text: self.environmentReport(
-          tartVersion: success && !value.isEmpty ? value : "无法读取"))
+          tartVersion: success && !value.isEmpty ? value : localized("Unable to read")))
     }
   }
 
@@ -1810,15 +1978,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         try service.register()
         if service.status == .requiresApproval {
           showAlert(
-            title: "需要用户批准",
-            message: "请在系统设置的“通用 > 登录项与扩展”中允许 TartR。")
+            title: localized("User approval is required"),
+            message: localized(
+              "Allow TartR in System Settings > General > Login Items & Extensions."))
           SMAppService.openSystemSettingsLoginItems()
         }
       @unknown default:
-        showAlert(title: "无法修改登录项", message: "当前 macOS 返回了未知的登录项状态。")
+        showAlert(
+          title: localized("Unable to change login item"),
+          message: localized("macOS returned an unknown login item status."))
       }
     } catch {
-      showAlert(title: "无法修改登录项", message: error.localizedDescription)
+      showAlert(
+        title: localized("Unable to change login item"), message: error.localizedDescription)
     }
     updateLaunchAtLoginMenuItem()
   }
@@ -1828,16 +2000,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     switch SMAppService.mainApp.status {
     case .enabled:
       item.state = .on
-      item.title = "登录时启动 TartR"
+      item.title = localized("Launch TartR at Login")
     case .requiresApproval:
       item.state = .mixed
-      item.title = "登录时启动 TartR（需要批准）"
+      item.title = localized("Launch TartR at Login (Approval Required)")
     case .notRegistered, .notFound:
       item.state = .off
-      item.title = "登录时启动 TartR"
+      item.title = localized("Launch TartR at Login")
     @unknown default:
       item.state = .off
-      item.title = "登录时启动 TartR"
+      item.title = localized("Launch TartR at Login")
     }
   }
 
@@ -1908,7 +2080,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       runtimes.removeValue(forKey: id)
       states[id] = .failed(-1)
       refreshUI()
-      showAlert(title: "无法启动 \(configuration.name)", message: error.localizedDescription)
+      showAlert(
+        title: localized("Unable to start %@", configuration.name),
+        message: error.localizedDescription)
     }
   }
 
@@ -1962,8 +2136,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
           guard let self else { return }
           self.syncTartState {
             if process.terminationStatus != 0, self.states[id]?.isRunning == true {
-              let details = output.isEmpty ? "tart stop 失败" : output
-              self.showAlert(title: "无法停止 \(configuration.name)", message: details)
+              let details = output.isEmpty ? localized("tart stop failed") : output
+              self.showAlert(
+                title: localized("Unable to stop %@", configuration.name), message: details)
             }
           }
         }
@@ -1972,7 +2147,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         DispatchQueue.main.async {
           self?.states[id] = .failed(-1)
           self?.refreshUI()
-          self?.showAlert(title: "无法停止 \(configuration.name)", message: error.localizedDescription)
+          self?.showAlert(
+            title: localized("Unable to stop %@", configuration.name),
+            message: error.localizedDescription)
         }
       }
     }
@@ -2000,11 +2177,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       else { return }
       let message =
         process.terminationStatus == 127
-        ? "未找到 tart 命令。请检查 Tart 是否已安装，并查看该虚拟机日志。"
-        : "Tart 已退出（状态码 \(process.terminationStatus)）。请查看该虚拟机日志。"
+        ? localized(
+          "The tart command was not found. Check that Tart is installed and review the VM log.")
+        : localized("Tart exited with status %d. Review the VM log.", process.terminationStatus)
       self.states[id] = .failed(process.terminationStatus)
       self.refreshUI()
-      self.showAlert(title: "\(configuration.name) 未能运行", message: message)
+      self.showAlert(title: localized("%@ failed to run", configuration.name), message: message)
     }
   }
 
@@ -2037,10 +2215,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         guard let self else { return }
         if self.syncProcess === process { self.syncProcess = nil }
         if !completedBeforeTimeout {
-          self.tartSyncError = "tart list 超过 15 秒未响应，已终止本次状态同步"
+          self.tartSyncError = localized(
+            "tart list did not respond within 15 seconds. This synchronization was terminated.")
           self.finishSync()
         } else if captured.wasTruncated {
-          self.tartSyncError = "tart list 输出超过 1 MB 安全上限，已忽略本次状态同步"
+          self.tartSyncError = localized(
+            "tart list output exceeded the 1 MB safety limit. This synchronization was ignored.")
           self.finishSync()
         } else if process.terminationStatus == 0,
           let infos = try? TartListParser.parse(output)
@@ -2050,8 +2230,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
           self.tartInstalled = process.terminationStatus != 127
           self.tartSyncError = String(data: output, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-          if self.tartSyncError?.isEmpty != false, process.terminationStatus == 127 {
-            self.tartSyncError = "尚未安装 Tart"
+          if process.terminationStatus == 127 {
+            self.tartSyncError = localized("Tart is not installed")
           }
           self.finishSync()
         }
@@ -2106,7 +2286,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     completion: @escaping (Bool, String) -> Void
   ) {
     guard operationProcess == nil, updateDownloader == nil else {
-      showAlert(title: "已有操作正在进行", message: "请等待当前 Tart 操作完成或先取消。")
+      showAlert(
+        title: localized("An operation is already in progress"),
+        message: localized("Wait for the current Tart operation to finish or cancel it first."))
       return
     }
 
@@ -2119,7 +2301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       outputCapture.processDidStart()
     } catch {
       _ = outputCapture.finish()
-      showAlert(title: "无法运行 Tart", message: error.localizedDescription)
+      showAlert(title: localized("Unable to run Tart"), message: error.localizedDescription)
       completion(false, error.localizedDescription)
       return
     }
@@ -2149,17 +2331,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
           // User cancellation is an expected outcome, not a success or failure alert.
         } else if success {
           if showsSuccessAlert {
-            self.showAlert(
-              title: "操作完成", message: title.replacingOccurrences(of: "正在", with: "已"))
+            self.showAlert(title: localized("Operation Completed"), message: title)
           }
         } else if showsFailureAlert {
           let details = output.trimmingCharacters(in: .whitespacesAndNewlines)
           let fallback =
             process.terminationReason == .uncaughtSignal
-            ? "操作被意外中断（信号 \(process.terminationStatus)）"
-            : "退出状态码 \(process.terminationStatus)"
+            ? localized(
+              "The operation was interrupted unexpectedly by signal %d.", process.terminationStatus)
+            : localized("Exit status %d", process.terminationStatus)
           self.showAlert(
-            title: "Tart 操作失败",
+            title: localized("Tart Operation Failed"),
             message: details.isEmpty ? fallback : String(details.suffix(3000)))
         }
         guard !self.isQuitting else { return }
@@ -2236,10 +2418,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     case .valid:
       return true
     case .empty, .containsSlash:
-      showAlert(title: "名称无效", message: "虚拟机名称不能为空，也不能包含 /。")
+      showAlert(
+        title: localized("Invalid name"),
+        message: localized("A VM name cannot be empty or contain /."))
       return false
     case .duplicate:
-      showAlert(title: "名称已存在", message: "“\(name)”已经存在。")
+      showAlert(
+        title: localized("Name already exists"), message: localized("“%@” already exists.", name))
       return false
     }
   }
@@ -2267,8 +2452,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     alert.messageText = title
     alert.informativeText = message
     alert.accessoryView = labeledForm(controls, width: 410)
-    alert.addButton(withTitle: "确定")
-    alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: localized("OK"))
+    alert.addButton(withTitle: localized("Cancel"))
     guard alert.runModal() == .alertFirstButtonReturn else { return nil }
     return controls.compactMap {
       ($0.1 as? NSTextField)?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2298,7 +2483,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   private func storageByteString(_ bytes: UInt64) -> String {
-    guard bytes <= UInt64(Int64.max) else { return "超过 8 EB" }
+    guard bytes <= UInt64(Int64.max) else { return localized("More than 8 EB") }
     return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
   }
 
@@ -2325,13 +2510,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     let alert = NSAlert()
     alert.alertStyle = .critical
-    alert.messageText = "可用磁盘空间可能不足"
+    alert.messageText = localized("Available disk space may be insufficient")
     alert.informativeText =
-      "\(operation)预计需要约 \(storageByteString(requiredBytes))（包含 5 GB 安全余量），"
-      + "目标卷当前可用 \(storageByteString(availableBytes))。继续可能导致操作失败或宿主机空间耗尽。"
-    alert.addButton(withTitle: "取消")
-    alert.addButton(withTitle: "仍然继续")
-    if offersCacheCleanup { alert.addButton(withTitle: "清理 Tart 缓存…") }
+      localized(
+        "%@ requires approximately %@ including a 5 GB safety margin. The target volume currently has %@ available. Continuing may fail or exhaust host disk space.",
+        operation, storageByteString(requiredBytes), storageByteString(availableBytes))
+    alert.addButton(withTitle: localized("Cancel"))
+    alert.addButton(withTitle: localized("Continue Anyway"))
+    if offersCacheCleanup { alert.addButton(withTitle: localized("Prune Tart Cache…")) }
     switch alert.runModal() {
     case .alertSecondButtonReturn:
       return true
@@ -2380,13 +2566,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   private var tartExecutableDescription: String {
     let locatedPath = tartExecutableURL?.path
     guard let configuredPath = configuredTartExecutablePath else {
-      return locatedPath ?? "登录 shell PATH（未发现标准安装路径）"
+      return locatedPath ?? localized("Login shell PATH (no standard installation found)")
     }
-    if locatedPath == configuredPath { return "\(configuredPath)（自定义）" }
+    if locatedPath == configuredPath { return localized("%@ (custom)", configuredPath) }
     if let locatedPath {
-      return "\(locatedPath)（自定义路径不可用，已自动回退）"
+      return localized("%@ (custom path unavailable; automatically using fallback)", locatedPath)
     }
-    return "\(configuredPath)（自定义路径不可用，将尝试登录 shell PATH）"
+    return localized("%@ (custom path unavailable; trying login shell PATH)", configuredPath)
   }
 
   private var diagnosticTartExecutableDescription: String {
@@ -2482,11 +2668,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     let tartPath = diagnosticTartExecutableDescription
     let tartStatus: String
     if !tartInstalled {
-      tartStatus = "未安装"
+      tartStatus = localized("Not installed")
     } else if tartSyncError != nil {
-      tartStatus = "状态同步异常"
+      tartStatus = localized("State synchronization error")
     } else {
-      tartStatus = "可用"
+      tartStatus = localized("Available")
     }
     let runningCount = states.values.filter { $0 == .running }.count
     let suspendedCount = states.values.filter { $0 == .suspended }.count
@@ -2533,7 +2719,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       Tart: \(tartVersion)
       Tart executable: \(tartExecutableDescription)
       Host volume available: \(hostAvailableStorageDescription)
-      State synchronization: \(tartSyncError == nil ? "正常" : "异常")
+      State synchronization: \(tartSyncError == nil ? localized("Normal") : localized("Error"))
       """
   }
 
@@ -2550,14 +2736,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       break
     case .backup:
       if let current { defaults.set(current, forKey: defaultsCorruptKey) }
-      configurationRecoveryNotice = "当前配置数据无法读取，TartR 已从最近一次有效备份恢复。损坏的原始数据已保留用于诊断。"
+      configurationRecoveryNotice = localized(
+        "The current configuration could not be read. TartR restored the latest valid backup and preserved the corrupted data for diagnostics."
+      )
       saveConfigurations()
     case .legacy:
       saveConfigurations()
     case .empty:
       if let current {
         defaults.set(current, forKey: defaultsCorruptKey)
-        configurationRecoveryNotice = "当前配置数据和备份均无法读取。TartR 已保留损坏数据并创建空白虚拟机列表；本地 VM 会在状态同步后重新发现。"
+        configurationRecoveryNotice = localized(
+          "Neither the current configuration nor its backup could be read. TartR preserved the corrupted data and created an empty VM list; local VMs will be rediscovered after synchronization."
+        )
       }
       saveConfigurations()
     }
@@ -2640,25 +2830,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       !(searchField?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
       .isEmpty ?? true)
     if let tartSyncError, !tartSyncError.isEmpty {
-      summaryLabel?.stringValue = "无法同步 Tart：\(tartSyncError)"
+      summaryLabel?.stringValue = localized("Unable to synchronize Tart: %@", tartSyncError)
       summaryLabel?.textColor = .systemRed
     } else {
       let selectedCount = selectedConfigurations.count
-      let selectionSuffix = selectedCount > 1 ? " 已选择 \(selectedCount) 台。" : ""
+      let selectionSuffix = selectedCount > 1 ? localized(" %d selected.", selectedCount) : ""
       let availableStorage = availableStorageBytes(
         at: FileManager.default.homeDirectoryForCurrentUser)
       let storageSuffix =
         availableStorage.map {
-          " 宿主卷可用 \(storageByteString(UInt64(max($0, 0))))。"
+          localized(" %@ available on the host volume.", storageByteString(UInt64(max($0, 0))))
         } ?? ""
       if isFiltering {
         summaryLabel?.stringValue =
-          "显示 \(visible.count) / \(total) 台虚拟机，\(runningCount) 台正在运行。\(selectionSuffix)\(storageSuffix)"
+          localized("Showing %d of %d VM(s); %d running.", visible.count, total, runningCount)
+          + selectionSuffix + storageSuffix
       } else {
         summaryLabel?.stringValue =
           runningCount == 0
-          ? "已发现/保存 \(total) 台虚拟机，没有正在运行的实例。\(selectionSuffix)\(storageSuffix)"
-          : "已发现/保存 \(total) 台虚拟机，\(runningCount) 台正在运行。\(selectionSuffix)\(storageSuffix)"
+          ? localized("%d VM(s) discovered/saved; none running.", total) + selectionSuffix
+            + storageSuffix
+          : localized("%d VM(s) discovered/saved; %d running.", total, runningCount)
+            + selectionSuffix
+            + storageSuffix
       }
       let lowStorageThreshold: Int64 = 15 * 1_024 * 1_024 * 1_024
       summaryLabel?.textColor =
@@ -2673,12 +2867,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     moreButton?.isEnabled = tartInstalled && !operationBusy
     let capabilities = selectionCapabilities
     let count = capabilities.selectionCount
-    startButton?.title = count > 1 ? "启动 \(capabilities.startableIDs.count) 台" : "启动"
-    stopButton?.title = count > 1 ? "停止 \(capabilities.stoppableIDs.count) 台" : "停止"
-    deleteButton?.title = count > 1 ? "移除记录 (\(count))" : "移除记录"
-    startButton?.toolTip = count > 1 ? "只启动所选项目中当前可以启动的虚拟机" : nil
-    stopButton?.toolTip = count > 1 ? "只停止所选项目中正在启动或运行的虚拟机" : nil
-    deleteButton?.toolTip = count > 1 ? "仅可批量移除本地不存在的保存记录，不会删除磁盘" : nil
+    startButton?.title =
+      count > 1 ? localized("Run %d", capabilities.startableIDs.count) : localized("Run")
+    stopButton?.title =
+      count > 1 ? localized("Stop %d", capabilities.stoppableIDs.count) : localized("Stop")
+    deleteButton?.title =
+      count > 1 ? localized("Remove Records (%d)", count) : localized("Remove Record")
+    startButton?.toolTip =
+      count > 1 ? localized("Run only selected VMs that can currently be started") : nil
+    stopButton?.toolTip =
+      count > 1 ? localized("Stop only selected VMs that are starting or running") : nil
+    deleteButton?.toolTip =
+      count > 1
+      ? localized(
+        "Bulk removal applies only to saved records missing locally and never deletes disks")
+      : nil
     startButton?.isEnabled = tartInstalled && !capabilities.startableIDs.isEmpty
     stopButton?.isEnabled = tartInstalled && !capabilities.stoppableIDs.isEmpty
     deleteButton?.isEnabled = capabilities.canRemoveRecords
@@ -2691,7 +2894,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     alert.alertStyle = .warning
     alert.messageText = title
     alert.informativeText = message
-    alert.addButton(withTitle: "好")
+    alert.addButton(withTitle: localized("OK"))
     alert.runModal()
   }
 
@@ -2721,8 +2924,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     let alert = NSAlert()
     alert.messageText = title
     alert.accessoryView = scrollView
-    alert.addButton(withTitle: "关闭")
-    alert.addButton(withTitle: "复制")
+    alert.addButton(withTitle: localized("Close"))
+    alert.addButton(withTitle: localized("Copy"))
     if alert.runModal() == .alertSecondButtonReturn {
       NSPasteboard.general.clearContents()
       NSPasteboard.general.setString(text, forType: .string)
@@ -2773,13 +2976,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     heading.font = NSFont.systemFont(ofSize: 22, weight: .semibold)
 
     searchField = NSSearchField()
-    searchField.placeholderString = "搜索虚拟机"
-    searchField.setAccessibilityLabel("搜索虚拟机")
+    searchField.placeholderString = localized("Search VMs")
+    searchField.setAccessibilityLabel(localized("Search VMs"))
     searchField.sendsSearchStringImmediately = true
     searchField.target = self
     searchField.action = #selector(searchChanged)
     searchField.widthAnchor.constraint(equalToConstant: 220).isActive = true
-    imageButton = makeButton("下载/克隆镜像…", action: #selector(downloadImage))
+    imageButton = makeButton(localized("Download/Clone Image…"), action: #selector(downloadImage))
     let headingRow = NSStackView(views: [heading, NSView(), searchField, imageButton])
     headingRow.orientation = .horizontal
     headingRow.spacing = 10
@@ -2796,17 +2999,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     installBox.borderColor = NSColor.systemYellow.withAlphaComponent(0.45)
     installBox.borderWidth = 1
     let installLabel = NSTextField(
-      wrappingLabelWithString: "尚未检测到 Tart。请先通过 Homebrew 安装：brew install cirruslabs/cli/tart")
+      wrappingLabelWithString: localized(
+        "Tart was not detected. Install it with Homebrew: brew install cirruslabs/cli/tart"))
     installLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
     let installButton = NSButton(
-      title: "复制命令并打开终端", target: self, action: #selector(copyInstallCommandAndOpenTerminal))
+      title: localized("Copy Command and Open Terminal"), target: self,
+      action: #selector(copyInstallCommandAndOpenTerminal))
     let chooseTartButton = NSButton(
-      title: "选择已有 Tart…", target: self, action: #selector(chooseTartExecutable))
-    let docsButton = NSButton(title: "安装文档", target: self, action: #selector(openQuickStart))
-    let installRow = NSStackView(views: [
-      installLabel, NSView(), installButton, chooseTartButton, docsButton,
-    ])
-    installRow.orientation = .horizontal
+      title: localized("Choose Existing Tart…"), target: self,
+      action: #selector(chooseTartExecutable))
+    let docsButton = NSButton(
+      title: localized("Installation Guide"), target: self, action: #selector(openQuickStart))
+    let installButtons = NSStackView(views: [installButton, chooseTartButton, docsButton, NSView()])
+    installButtons.orientation = .horizontal
+    installButtons.spacing = 10
+    let installRow = NSStackView(views: [installLabel, installButtons])
+    installRow.orientation = .vertical
+    installRow.alignment = .leading
     installRow.spacing = 10
     installRow.translatesAutoresizingMaskIntoConstraints = false
     installBox.contentView?.addSubview(installRow)
@@ -2822,12 +3031,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     installBox.isHidden = true
 
     nameField = NSTextField()
-    nameField.placeholderString = "手动添加虚拟机名称（本地 VM 通常会自动发现）"
-    nameField.setAccessibilityLabel("手动添加虚拟机名称")
+    nameField.placeholderString = localized(
+      "Add a VM name manually (local VMs are usually discovered automatically)")
+    nameField.setAccessibilityLabel(localized("Add VM name manually"))
     nameField.delegate = self
     nameField.font = NSFont.systemFont(ofSize: 13)
 
-    addButton = makeButton("添加", action: #selector(addVM))
+    addButton = makeButton(localized("Add"), action: #selector(addVM))
     addButton.isEnabled = false
     addButton.widthAnchor.constraint(equalToConstant: 88).isActive = true
 
@@ -2842,36 +3052,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     tableView.usesAlternatingRowBackgroundColors = true
     tableView.allowsEmptySelection = true
     tableView.allowsMultipleSelection = true
-    tableView.setAccessibilityLabel("Tart 虚拟机列表")
+    tableView.setAccessibilityLabel(localized("Tart VM List"))
     tableView.autosaveName = "TartRVMTable"
     tableView.autosaveTableColumns = true
     tableView.doubleAction = #selector(toggleSelectedVM)
     tableView.target = self
 
     let nameColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
-    nameColumn.title = "虚拟机名称"
+    nameColumn.title = localized("VM Name")
     nameColumn.minWidth = 230
     nameColumn.sortDescriptorPrototype = NSSortDescriptor(
       key: "name", ascending: true, selector: #selector(NSString.localizedStandardCompare(_:)))
     let statusColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("status"))
-    statusColumn.title = "状态"
+    statusColumn.title = localized("Status")
     statusColumn.width = 125
     statusColumn.minWidth = 110
     statusColumn.sortDescriptorPrototype = NSSortDescriptor(key: "status", ascending: true)
     let diskColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("disk"))
-    diskColumn.title = "磁盘"
+    diskColumn.title = localized("Disk")
     diskColumn.width = 80
     diskColumn.minWidth = 70
     diskColumn.sortDescriptorPrototype = NSSortDescriptor(key: "disk", ascending: true)
     let sizeColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("size"))
-    sizeColumn.title = "实际占用"
+    sizeColumn.title = localized("Actual Size")
     sizeColumn.width = 90
     sizeColumn.minWidth = 80
     sizeColumn.sortDescriptorPrototype = NSSortDescriptor(key: "size", ascending: true)
     let autoColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("autostart"))
-    autoColumn.title = "打开 App 时启动"
-    autoColumn.width = 125
-    autoColumn.minWidth = 110
+    autoColumn.title = localized("Run When App Opens")
+    autoColumn.width = 145
+    autoColumn.minWidth = 130
     tableView.addTableColumn(nameColumn)
     tableView.addTableColumn(statusColumn)
     tableView.addTableColumn(diskColumn)
@@ -2885,11 +3095,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     scrollView.hasHorizontalScroller = false
     scrollView.borderType = .bezelBorder
 
-    startButton = makeButton("启动", action: #selector(startSelectedVM))
-    stopButton = makeButton("停止", action: #selector(stopSelectedVM))
-    logButton = makeButton("打开日志", action: #selector(openSelectedLog))
-    moreButton = makeButton("更多操作…", action: #selector(showMoreMenu(_:)))
-    deleteButton = makeButton("移除记录", action: #selector(deleteSelectedVM))
+    startButton = makeButton(localized("Run"), action: #selector(startSelectedVM))
+    stopButton = makeButton(localized("Stop"), action: #selector(stopSelectedVM))
+    logButton = makeButton(localized("Open Log"), action: #selector(openSelectedLog))
+    moreButton = makeButton(localized("More Actions…"), action: #selector(showMoreMenu(_:)))
+    deleteButton = makeButton(localized("Remove Record"), action: #selector(deleteSelectedVM))
     deleteButton.contentTintColor = .systemRed
 
     let buttonRow = NSStackView(views: [
@@ -2908,7 +3118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     operationLabel.textColor = .systemBlue
     operationLabel.isHidden = true
     cancelOperationButton = NSButton(
-      title: "取消操作", target: self, action: #selector(cancelOperation))
+      title: localized("Cancel Operation"), target: self, action: #selector(cancelOperation))
     cancelOperationButton.bezelStyle = .inline
     cancelOperationButton.isHidden = true
     let operationRow = NSStackView(views: [
@@ -2918,7 +3128,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     operationRow.spacing = 8
 
     let hint = NSTextField(
-      labelWithString: "状态每 5 秒及窗口激活时与 Tart 同步。退出时可选择停止 VM 或让它们继续在后台运行。")
+      labelWithString: localized(
+        "Status synchronizes with Tart every 5 seconds and when the window activates. When quitting, you can stop VMs or keep them running in the background."
+      ))
     hint.textColor = .tertiaryLabelColor
     hint.font = NSFont.systemFont(ofSize: 11)
 
@@ -2958,68 +3170,83 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     mainMenu.addItem(appItem)
     let appMenu = NSMenu()
 
-    let about = NSMenuItem(title: "关于 TartR", action: #selector(showAbout), keyEquivalent: "")
+    let about = NSMenuItem(
+      title: localized("About TartR"), action: #selector(showAbout), keyEquivalent: "")
     about.target = self
     appMenu.addItem(about)
     let checkUpdates = NSMenuItem(
-      title: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
+      title: localized("Check for Updates…"), action: #selector(checkForUpdates), keyEquivalent: "")
     checkUpdates.target = self
     appMenu.addItem(checkUpdates)
     let automaticUpdates = NSMenuItem(
-      title: "自动检查更新", action: #selector(toggleAutomaticUpdateChecks), keyEquivalent: "")
+      title: localized("Automatically Check for Updates"),
+      action: #selector(toggleAutomaticUpdateChecks),
+      keyEquivalent: "")
     automaticUpdates.target = self
     automaticUpdateMenuItem = automaticUpdates
     appMenu.addItem(automaticUpdates)
     updateAutomaticUpdateMenuItem()
     appMenu.addItem(.separator())
-    let show = NSMenuItem(title: "显示窗口", action: #selector(showWindow), keyEquivalent: "1")
+    let show = NSMenuItem(
+      title: localized("Show Window"), action: #selector(showWindow), keyEquivalent: "1")
     show.target = self
     appMenu.addItem(show)
     let launchAtLogin = NSMenuItem(
-      title: "登录时启动 TartR", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+      title: localized("Launch TartR at Login"), action: #selector(toggleLaunchAtLogin),
+      keyEquivalent: "")
     launchAtLogin.target = self
     launchAtLoginMenuItem = launchAtLogin
     appMenu.addItem(launchAtLogin)
     updateLaunchAtLoginMenuItem()
-    let log = NSMenuItem(title: "打开所选日志", action: #selector(openSelectedLog), keyEquivalent: "l")
+    let log = NSMenuItem(
+      title: localized("Open Selected Log"), action: #selector(openSelectedLog), keyEquivalent: "l")
     log.target = self
     appMenu.addItem(log)
     let appLog = NSMenuItem(
-      title: "打开 TartR 日志", action: #selector(openApplicationLog), keyEquivalent: "")
+      title: localized("Open TartR Log"), action: #selector(openApplicationLog), keyEquivalent: "")
     appLog.target = self
     appMenu.addItem(appLog)
     let chooseTart = NSMenuItem(
-      title: "选择 Tart 可执行文件…", action: #selector(chooseTartExecutable), keyEquivalent: "")
+      title: localized("Choose Tart Executable…"), action: #selector(chooseTartExecutable),
+      keyEquivalent: "")
     chooseTart.target = self
     appMenu.addItem(chooseTart)
     let resetTart = NSMenuItem(
-      title: "恢复自动检测 Tart", action: #selector(resetTartExecutable), keyEquivalent: "")
+      title: localized("Restore Automatic Tart Detection"), action: #selector(resetTartExecutable),
+      keyEquivalent: "")
     resetTart.target = self
     appMenu.addItem(resetTart)
     let environment = NSMenuItem(
-      title: "运行环境…", action: #selector(showEnvironmentInfo), keyEquivalent: "")
+      title: localized("Runtime Environment…"), action: #selector(showEnvironmentInfo),
+      keyEquivalent: "")
     environment.target = self
     appMenu.addItem(environment)
     let diagnostics = NSMenuItem(
-      title: "导出诊断信息…", action: #selector(exportDiagnostics), keyEquivalent: "")
+      title: localized("Export Diagnostics…"), action: #selector(exportDiagnostics),
+      keyEquivalent: "")
     diagnostics.target = self
     appMenu.addItem(diagnostics)
     let exportSettingsItem = NSMenuItem(
-      title: "导出 TartR 设置…", action: #selector(exportSettings), keyEquivalent: "")
+      title: localized("Export TartR Settings…"), action: #selector(exportSettings),
+      keyEquivalent: "")
     exportSettingsItem.target = self
     appMenu.addItem(exportSettingsItem)
     let importSettingsItem = NSMenuItem(
-      title: "导入 TartR 设置…", action: #selector(importSettings), keyEquivalent: "")
+      title: localized("Import TartR Settings…"), action: #selector(importSettings),
+      keyEquivalent: "")
     importSettingsItem.target = self
     appMenu.addItem(importSettingsItem)
-    let refresh = NSMenuItem(title: "刷新状态", action: #selector(refreshNow), keyEquivalent: "r")
+    let refresh = NSMenuItem(
+      title: localized("Refresh Status"), action: #selector(refreshNow), keyEquivalent: "r")
     refresh.target = self
     appMenu.addItem(refresh)
-    let help = NSMenuItem(title: "Tart 快速入门", action: #selector(openQuickStart), keyEquivalent: "?")
+    let help = NSMenuItem(
+      title: localized("Tart Quick Start"), action: #selector(openQuickStart), keyEquivalent: "?")
     help.target = self
     appMenu.addItem(help)
     appMenu.addItem(.separator())
-    let quit = NSMenuItem(title: "退出 \(appTitle)", action: #selector(quitApp), keyEquivalent: "q")
+    let quit = NSMenuItem(
+      title: localized("Quit %@", appTitle), action: #selector(quitApp), keyEquivalent: "q")
     quit.target = self
     appMenu.addItem(quit)
     appItem.submenu = appMenu

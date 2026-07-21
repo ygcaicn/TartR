@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  signed-release:
+  release:
     runs-on: macos-15
     timeout-minutes: 60
     steps:
@@ -31,7 +31,28 @@ jobs:
       - name: Test
         run: make check
 
+      - name: Detect signing credentials
+        id: signing
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          DEVELOPER_ID_APPLICATION: ${{ secrets.DEVELOPER_ID_APPLICATION }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          if [[ -n "$CERTIFICATE_BASE64" && -n "$CERTIFICATE_PASSWORD" \
+            && -n "$KEYCHAIN_PASSWORD" && -n "$DEVELOPER_ID_APPLICATION" \
+            && -n "$APPLE_ID" && -n "$APPLE_TEAM_ID" && -n "$APPLE_APP_PASSWORD" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Developer ID/notarization credentials are incomplete; publishing a verified ad-hoc signed build."
+          fi
+
       - name: Import Developer ID certificate
+        if: steps.signing.outputs.available == 'true'
         env:
           CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
@@ -54,7 +75,7 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -F "$DEVELOPER_ID_APPLICATION"
 
-      - name: Build signed universal app
+      - name: Build universal app
         env:
           SIGN_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION }}
           UPDATE_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/latest/download/TartR-update.json
@@ -64,6 +85,7 @@ jobs:
         run: make smoke
 
       - name: Configure notarization
+        if: steps.signing.outputs.available == 'true'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -78,6 +100,7 @@ jobs:
             --password "$APPLE_APP_PASSWORD"
 
       - name: Notarize and staple
+        if: steps.signing.outputs.available == 'true'
         env:
           NOTARY_PROFILE: TartR-notary
           SIGN_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION }}
@@ -96,6 +119,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          body: ${{ steps.signing.outputs.available == 'true' && '' || '⚠️ This build is ad-hoc signed because Developer ID and Apple notarization credentials were not configured. macOS Gatekeeper may require users to explicitly approve the app. SHA-256 checksums are included for every archive.' }}
           files: |
             outputs/TartR-*-macos.zip
             outputs/TartR-*-macos.zip.sha256
@@ -106,5 +130,5 @@ jobs:
             outputs/TartR-update.json
 
       - name: Remove temporary keychain
-        if: always()
+        if: always() && steps.signing.outputs.available == 'true'
         run: security delete-keychain "$RUNNER_TEMP/tartr-signing.keychain-db" || true

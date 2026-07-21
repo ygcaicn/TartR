@@ -16,6 +16,7 @@ APP_PID=""
 VM_PID=""
 RUNNING_VM="smoke-running"
 AUTOSTART_VM="smoke-autostart"
+SMOKE_LANGUAGE="${TARTR_SMOKE_LANGUAGE:-en}"
 
 cleanup() {
   if [[ -n "$APP_PID" ]] && /bin/kill -0 "$APP_PID" 2>/dev/null; then
@@ -99,7 +100,7 @@ CFFIXED_USER_HOME="$HOME_DIR" HOME="$HOME_DIR" \
   TART_EXECUTABLE="$FAKE_TART" \
   FAKE_TART_STATE_DIR="$STATE_DIR" FAKE_TART_LOG="$FAKE_LOG" \
   FAKE_TART_VMS="$RUNNING_VM $AUTOSTART_VM" \
-  "$APP/Contents/MacOS/TartR" > "$APP_STDOUT" 2>&1 &
+  "$APP/Contents/MacOS/TartR" -AppleLanguages "($SMOKE_LANGUAGE)" > "$APP_STDOUT" 2>&1 &
 APP_PID=$!
 wait_for "TartR process" has_app_process
 [[ "$APP_PID" != *$'\n'* ]] || fail "more than one TartR instance launched"
@@ -115,4 +116,4 @@ wait_for "reopen state synchronization" has_list_count_greater_than "$INITIAL_LI
 [[ "$(/usr/bin/grep -c "^run-invoked: $AUTOSTART_VM$" "$FAKE_LOG")" == 1 ]] \
   || fail "TartR did not autostart the configured stopped VM exactly once"
 
-print "TartR packaged app smoke test passed (PID $APP_PID, list syncs: $(list_count))."
+print "TartR packaged app smoke test passed for $SMOKE_LANGUAGE (PID $APP_PID, list syncs: $(list_count))."

@@ -302,14 +302,17 @@ public enum VMState: Equatable, Sendable {
 
   public var label: String {
     switch self {
-    case .unknown: return "状态未知"
-    case .missing: return "本地不存在"
-    case .stopped: return "已停止"
-    case .suspended: return "已挂起"
-    case .starting: return "正在启动…"
-    case .running: return "运行中"
-    case .stopping: return "正在停止…"
-    case .failed(let code): return code == 127 ? "未找到 Tart" : "失败（\(code)）"
+    case .unknown: return TartRLocalization.string("Unknown")
+    case .missing: return TartRLocalization.string("Missing locally")
+    case .stopped: return TartRLocalization.string("Stopped")
+    case .suspended: return TartRLocalization.string("Suspended")
+    case .starting: return TartRLocalization.string("Starting…")
+    case .running: return TartRLocalization.string("Running")
+    case .stopping: return TartRLocalization.string("Stopping…")
+    case .failed(let code):
+      return code == 127
+        ? TartRLocalization.string("Tart not found")
+        : TartRLocalization.string("Failed (%d)", code)
     }
   }
 

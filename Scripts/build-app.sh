@@ -42,6 +42,8 @@ X86_BIN_DIR="$(build_arch x86_64 | tail -n 1)"
   "$ARM_BIN_DIR/TartR" "$X86_BIN_DIR/TartR" -output "$STAGED_APP/Contents/MacOS/TartR"
 
 /bin/cp "$ROOT/Resources/Info.plist" "$STAGED_APP/Contents/Info.plist"
+/bin/cp -R "$ROOT/Resources/en.lproj" "$ROOT/Resources/zh-Hans.lproj" \
+  "$STAGED_APP/Contents/Resources/"
 if [[ -n "$UPDATE_MANIFEST_URL" ]]; then
   /usr/libexec/PlistBuddy \
     -c "Set :TartRUpdateManifestURL $UPDATE_MANIFEST_URL" "$STAGED_APP/Contents/Info.plist"

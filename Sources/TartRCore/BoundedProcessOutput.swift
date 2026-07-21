@@ -11,7 +11,8 @@ public struct BoundedOutputSnapshot: Equatable, Sendable {
 
   public var text: String {
     let value = String(decoding: data, as: UTF8.self)
-    return wasTruncated ? "[较早的输出已省略]\n\(value)" : value
+    return wasTruncated
+      ? "[\(TartRLocalization.string("Earlier output omitted"))]\n\(value)" : value
   }
 }
 

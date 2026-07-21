@@ -34,7 +34,8 @@ final class TartRCoreTests: XCTestCase {
     XCTAssertEqual(process.terminationStatus, 0)
     XCTAssertTrue(result.wasTruncated)
     XCTAssertEqual(result.data.count, 1_024)
-    XCTAssertTrue(result.text.hasPrefix("[较早的输出已省略]\n"))
+    XCTAssertTrue(
+      result.text.hasPrefix("[\(TartRLocalization.string("Earlier output omitted"))]\n"))
   }
 
   func testAppVersionComparisonAndUpdateManifestValidation() {

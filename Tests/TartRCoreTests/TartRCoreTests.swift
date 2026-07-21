@@ -346,6 +346,33 @@ final class TartRCoreTests: XCTestCase {
     XCTAssertEqual(located?.path, "/selected/tart")
   }
 
+  func testTartHomeResolverUsesAppSettingThenEnvironmentThenDefault() {
+    XCTAssertEqual(
+      TartHomeResolver.resolve(
+        configuredPath: "/Volumes/mini/home/tart_data",
+        environment: ["TART_HOME": "/environment/tart"]),
+      ResolvedTartHome(path: "/Volumes/mini/home/tart_data", source: .appSetting))
+    XCTAssertEqual(
+      TartHomeResolver.resolve(
+        configuredPath: nil,
+        environment: ["TART_HOME": "/environment/tart"]),
+      ResolvedTartHome(path: "/environment/tart", source: .environment))
+    XCTAssertEqual(
+      TartHomeResolver.resolve(configuredPath: nil, environment: [:]),
+      ResolvedTartHome(path: nil, source: .tartDefault))
+  }
+
+  func testTartHomeResolverAppliesAndClearsEnvironment() {
+    XCTAssertEqual(
+      TartHomeResolver.applying(
+        configuredPath: "/Volumes/mini/home/tart_data",
+        to: ["PATH": "/usr/bin", "TART_HOME": "/old"]),
+      ["PATH": "/usr/bin", "TART_HOME": "/Volumes/mini/home/tart_data"])
+    XCTAssertEqual(
+      TartHomeResolver.applying(configuredPath: nil, to: ["PATH": "/usr/bin"]),
+      ["PATH": "/usr/bin"])
+  }
+
   func testVMExitAssessmentAvoidsFalseFailureAlerts() {
     XCTAssertFalse(
       VMExitAssessment.shouldReportFailure(

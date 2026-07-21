@@ -111,6 +111,51 @@ public enum TartExecutableLocator {
   }
 }
 
+public enum TartHomeSource: Equatable, Sendable {
+  case appSetting
+  case environment
+  case tartDefault
+}
+
+public struct ResolvedTartHome: Equatable, Sendable {
+  public let path: String?
+  public let source: TartHomeSource
+
+  public init(path: String?, source: TartHomeSource) {
+    self.path = path
+    self.source = source
+  }
+}
+
+public enum TartHomeResolver {
+  public static func resolve(
+    configuredPath: String?,
+    environment: [String: String] = ProcessInfo.processInfo.environment
+  ) -> ResolvedTartHome {
+    if let configuredPath, !configuredPath.isEmpty {
+      return ResolvedTartHome(path: configuredPath, source: .appSetting)
+    }
+    if let environmentPath = environment["TART_HOME"], !environmentPath.isEmpty {
+      return ResolvedTartHome(path: environmentPath, source: .environment)
+    }
+    return ResolvedTartHome(path: nil, source: .tartDefault)
+  }
+
+  public static func applying(
+    configuredPath: String?,
+    to environment: [String: String] = ProcessInfo.processInfo.environment
+  ) -> [String: String] {
+    var result = environment
+    let resolved = resolve(configuredPath: configuredPath, environment: environment)
+    if let path = resolved.path {
+      result["TART_HOME"] = path
+    } else {
+      result.removeValue(forKey: "TART_HOME")
+    }
+    return result
+  }
+}
+
 public enum TartShellBridge {
   public static let script = """
     export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"

@@ -366,3 +366,18 @@
 "Refresh Status" = "刷新状态";
 "Tart Quick Start" = "Tart 快速入门";
 "Quit %@" = "退出 %@";
+
+"Change Tart Home Later" = "请稍后再更改 Tart 主目录";
+"Stop all VMs started by TartR and wait for active operations and synchronization to finish before changing TART_HOME." = "更改 TART_HOME 前，请停止所有由 TartR 启动的虚拟机，并等待当前操作和状态同步完成。";
+"Choose Tart Home Directory" = "选择 Tart 主目录";
+"Choose Tart Home Directory…" = "选择 Tart 主目录…";
+"TartR will set TART_HOME for every Tart command and remember this directory. VM settings are stored separately for each Tart home." = "TartR 会为所有 Tart 命令设置 TART_HOME 并记住此目录。每个 Tart 主目录的 VM 设置会分别保存。";
+"Use This Directory" = "使用此目录";
+"Unable to Use Tart Home" = "无法使用 Tart 主目录";
+"The selected directory does not exist or is not accessible." = "所选目录不存在或无法访问。";
+"Selected Tart home directory: %@" = "已选择 Tart 主目录：%@";
+"Restored TART_HOME environment or Tart default directory." = "已恢复使用 TART_HOME 环境变量或 Tart 默认目录。";
+"%@ (TartR setting)" = "%@（TartR 设置）";
+"%@ (TART_HOME environment)" = "%@（TART_HOME 环境变量）";
+"Tart default directory" = "Tart 默认目录";
+"Restore Environment/Default Tart Home" = "恢复环境变量/默认 Tart 主目录";

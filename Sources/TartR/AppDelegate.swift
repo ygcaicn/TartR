@@ -14,6 +14,7 @@ private let defaultsBackupKey = "vmConfigurations.v2.backup"
 private let defaultsCorruptKey = "vmConfigurations.v2.corruptBackup"
 private let selectedVMKey = "selectedVM.v2"
 private let tartExecutablePathKey = "tartExecutablePath.v1"
+private let tartHomePathKey = "tartHomePath.v1"
 private let automaticUpdateChecksKey = "automaticUpdateChecks.v1"
 private let lastUpdateCheckKey = "lastUpdateCheck.v1"
 private let maximumCommandOutputBytes = 1_024 * 1_024
@@ -534,6 +535,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     case #selector(resetTartExecutable):
       return configuredTartExecutablePath != nil && operationProcess == nil
         && updateDownloader == nil && !syncInProgress
+    case #selector(chooseTartHome):
+      return canChangeTartHome
+    case #selector(resetTartHome):
+      return configuredTartHomePath != nil && canChangeTartHome
     case #selector(checkForUpdates):
       return updateLoader == nil && updateDownloader == nil
     case #selector(toggleAutomaticUpdateChecks):
@@ -611,7 +616,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   func tableViewSelectionDidChange(_ notification: Notification) {
     if let selected = selectedConfiguration {
-      UserDefaults.standard.set(selected.id.uuidString, forKey: selectedVMKey)
+      UserDefaults.standard.set(selected.id.uuidString, forKey: activeSelectedVMKey)
     }
     refreshUI()
   }
@@ -1036,6 +1041,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     resyncAfterTartExecutableChange()
   }
 
+  @objc private func chooseTartHome() {
+    guard canChangeTartHome else {
+      showAlert(
+        title: localized("Change Tart Home Later"),
+        message: localized(
+          "Stop all VMs started by TartR and wait for active operations and synchronization to finish before changing TART_HOME."
+        ))
+      return
+    }
+    let panel = NSOpenPanel()
+    panel.title = localized("Choose Tart Home Directory")
+    panel.message = localized(
+      "TartR will set TART_HOME for every Tart command and remember this directory. VM settings are stored separately for each Tart home."
+    )
+    panel.prompt = localized("Use This Directory")
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.canCreateDirectories = true
+    panel.allowsMultipleSelection = false
+    if let path = resolvedTartHome.path {
+      panel.directoryURL = URL(fileURLWithPath: path, isDirectory: true)
+    }
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    let path = url.standardizedFileURL.path
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+      isDirectory.boolValue
+    else {
+      showAlert(
+        title: localized("Unable to Use Tart Home"),
+        message: localized("The selected directory does not exist or is not accessible."))
+      return
+    }
+    switchTartHome(configuredPath: path)
+  }
+
+  @objc private func resetTartHome() {
+    guard canChangeTartHome else {
+      showAlert(
+        title: localized("Change Tart Home Later"),
+        message: localized(
+          "Stop all VMs started by TartR and wait for active operations and synchronization to finish before changing TART_HOME."
+        ))
+      return
+    }
+    switchTartHome(configuredPath: nil)
+  }
+
+  private func switchTartHome(configuredPath: String?) {
+    saveConfigurations()
+    if let configuredPath {
+      UserDefaults.standard.set(configuredPath, forKey: tartHomePathKey)
+      appendApplicationLog(localized("Selected Tart home directory: %@", configuredPath))
+    } else {
+      UserDefaults.standard.removeObject(forKey: tartHomePathKey)
+      appendApplicationLog(localized("Restored TART_HOME environment or Tart default directory."))
+    }
+    configurations.removeAll()
+    states.removeAll()
+    discoveredNames.removeAll()
+    infoByName.removeAll()
+    tartSyncError = nil
+    configurationRecoveryNotice = nil
+    lastTableSignature = nil
+    searchField.stringValue = ""
+    loadConfigurations()
+    refreshUI(forceTableReload: true)
+    restoreSelection()
+    syncTartState()
+  }
+
   private func validateAndSaveTartExecutable(_ url: URL) {
     let process = Process()
     process.executableURL = url
@@ -1170,7 +1246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       confirmStorageCapacity(
         operation: localized("Download and clone image"),
         operationBytes: 30 * 1_024 * 1_024 * 1_024,
-        at: FileManager.default.homeDirectoryForCurrentUser,
+        at: tartStorageURL,
         offersCacheCleanup: true)
     else { return }
     runManagedTartCommand(
@@ -1293,7 +1369,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       confirmStorageCapacity(
         operation: localized("Import VM archive"),
         operationBytes: estimatedImportBytes,
-        at: FileManager.default.homeDirectoryForCurrentUser,
+        at: tartStorageURL,
         offersCacheCleanup: true)
     else { return }
     runManagedTartCommand(
@@ -1745,7 +1821,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         operation: macOS
           ? localized("Download IPSW and create macOS VM") : localized("Create Linux VM"),
         operationBytes: UInt64(macOS ? 30 : 5) * 1_024 * 1_024 * 1_024,
-        at: FileManager.default.homeDirectoryForCurrentUser,
+        at: tartStorageURL,
         offersCacheCleanup: true)
     else { return }
     let arguments =
@@ -1937,7 +2013,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     states = Dictionary(uniqueKeysWithValues: configurations.map { ($0.id, VMState.unknown) })
     searchField.stringValue = ""
     lastTableSignature = nil
-    UserDefaults.standard.removeObject(forKey: selectedVMKey)
+    UserDefaults.standard.removeObject(forKey: activeSelectedVMKey)
     saveConfigurations()
     refreshUI(forceTableReload: true)
     restoreSelection()
@@ -2087,6 +2163,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   private func configureTartProcess(_ process: Process, arguments: [String]) {
+    process.environment = TartHomeResolver.applying(
+      configuredPath: configuredTartHomePath,
+      to: process.environment ?? ProcessInfo.processInfo.environment)
     if let executable = tartExecutableURL {
       process.executableURL = executable
       process.arguments = arguments
@@ -2489,7 +2568,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   private var hostAvailableStorageDescription: String {
     guard
-      let bytes = availableStorageBytes(at: FileManager.default.homeDirectoryForCurrentUser),
+      let bytes = availableStorageBytes(at: tartStorageURL),
       bytes >= 0
     else { return "unknown" }
     return storageByteString(UInt64(bytes))
@@ -2542,6 +2621,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     return path
   }
 
+  private var configuredTartHomePath: String? {
+    guard let path = UserDefaults.standard.string(forKey: tartHomePathKey), !path.isEmpty else {
+      return nil
+    }
+    return path
+  }
+
+  private var resolvedTartHome: ResolvedTartHome {
+    TartHomeResolver.resolve(configuredPath: configuredTartHomePath)
+  }
+
+  private var canChangeTartHome: Bool {
+    operationProcess == nil && updateDownloader == nil && !syncInProgress
+      && !runtimes.values.contains(where: { $0.process.isRunning })
+  }
+
+  private var tartStorageURL: URL {
+    resolvedTartHome.path.map { URL(fileURLWithPath: $0, isDirectory: true) }
+      ?? FileManager.default.homeDirectoryForCurrentUser
+  }
+
+  private var tartHomeDescription: String {
+    switch resolvedTartHome.source {
+    case .appSetting:
+      return localized("%@ (TartR setting)", resolvedTartHome.path ?? "")
+    case .environment:
+      return localized("%@ (TART_HOME environment)", resolvedTartHome.path ?? "")
+    case .tartDefault:
+      return localized("Tart default directory")
+    }
+  }
+
+  private var preferencesNamespaceSuffix: String {
+    guard let path = resolvedTartHome.path else { return "" }
+    let encoded = Data(path.utf8).base64EncodedString()
+      .replacingOccurrences(of: "/", with: "_")
+      .replacingOccurrences(of: "+", with: "-")
+      .replacingOccurrences(of: "=", with: "")
+    return ".home.\(encoded)"
+  }
+
+  private var activeDefaultsKey: String { defaultsKey + preferencesNamespaceSuffix }
+  private var activeDefaultsBackupKey: String { defaultsBackupKey + preferencesNamespaceSuffix }
+  private var activeDefaultsCorruptKey: String { defaultsCorruptKey + preferencesNamespaceSuffix }
+  private var activeSelectedVMKey: String { selectedVMKey + preferencesNamespaceSuffix }
+
   private var currentAppVersionString: String {
     Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
   }
@@ -2577,6 +2702,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   private var diagnosticTartExecutableDescription: String {
     tartExecutableDescription.replacingOccurrences(
+      of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
+  }
+
+  private var diagnosticTartHomeDescription: String {
+    tartHomeDescription.replacingOccurrences(
       of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
   }
 
@@ -2686,6 +2816,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)
       Architecture: \(architecture)
       Tart executable: \(tartPath)
+      Tart home: \(diagnosticTartHomeDescription)
       Tart status: \(tartStatus)
       Host volume available: \(hostAvailableStorageDescription)
       Saved/local VMs: \(configurations.count)/\(discoveredNames.count)
@@ -2718,6 +2849,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       Architecture: \(architecture)
       Tart: \(tartVersion)
       Tart executable: \(tartExecutableDescription)
+      Tart home: \(tartHomeDescription)
       Host volume available: \(hostAvailableStorageDescription)
       State synchronization: \(tartSyncError == nil ? localized("Normal") : localized("Error"))
       """
@@ -2725,17 +2857,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   private func loadConfigurations() {
     let defaults = UserDefaults.standard
-    let current = defaults.data(forKey: defaultsKey)
+    let current = defaults.data(forKey: activeDefaultsKey)
     let result = VMConfigurationRecovery.resolve(
       current: current,
-      backup: defaults.data(forKey: defaultsBackupKey),
-      legacy: legacyPreferenceDataValues(forKey: defaultsKey))
+      backup: defaults.data(forKey: activeDefaultsBackupKey),
+      legacy: preferencesNamespaceSuffix.isEmpty
+        ? legacyPreferenceDataValues(forKey: defaultsKey) : [])
     configurations = result.configurations
     switch result.source {
     case .current:
       break
     case .backup:
-      if let current { defaults.set(current, forKey: defaultsCorruptKey) }
+      if let current { defaults.set(current, forKey: activeDefaultsCorruptKey) }
       configurationRecoveryNotice = localized(
         "The current configuration could not be read. TartR restored the latest valid backup and preserved the corrupted data for diagnostics."
       )
@@ -2744,17 +2877,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       saveConfigurations()
     case .empty:
       if let current {
-        defaults.set(current, forKey: defaultsCorruptKey)
+        defaults.set(current, forKey: activeDefaultsCorruptKey)
         configurationRecoveryNotice = localized(
           "Neither the current configuration nor its backup could be read. TartR preserved the corrupted data and created an empty VM list; local VMs will be rediscovered after synchronization."
         )
       }
       saveConfigurations()
     }
-    if defaults.string(forKey: selectedVMKey) == nil,
+    if defaults.string(forKey: activeSelectedVMKey) == nil, preferencesNamespaceSuffix.isEmpty,
       let legacySelection = legacyPreferenceString(forKey: selectedVMKey)
     {
-      defaults.set(legacySelection, forKey: selectedVMKey)
+      defaults.set(legacySelection, forKey: activeSelectedVMKey)
     }
     for configuration in configurations { states[configuration.id] = .unknown }
   }
@@ -2777,17 +2910,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   private func saveConfigurations() {
     guard let data = try? JSONEncoder().encode(configurations) else { return }
     let defaults = UserDefaults.standard
-    if let current = defaults.data(forKey: defaultsKey), current != data,
+    if let current = defaults.data(forKey: activeDefaultsKey), current != data,
       (try? JSONDecoder().decode([VMConfiguration].self, from: current)) != nil
     {
-      defaults.set(current, forKey: defaultsBackupKey)
+      defaults.set(current, forKey: activeDefaultsBackupKey)
     }
-    defaults.set(data, forKey: defaultsKey)
+    defaults.set(data, forKey: activeDefaultsKey)
   }
 
   private func restoreSelection() {
     guard !visibleConfigurations.isEmpty else { return }
-    let savedID = UserDefaults.standard.string(forKey: selectedVMKey).flatMap(
+    let savedID = UserDefaults.standard.string(forKey: activeSelectedVMKey).flatMap(
       UUID.init(uuidString:))
     let row =
       savedID.flatMap { id in visibleConfigurations.firstIndex(where: { $0.id == id }) } ?? 0
@@ -2808,7 +2941,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       ].joined(separator: "|")
     }.joined(separator: "\n")
     if forceTableReload || signature != lastTableSignature {
-      let selectedID = UserDefaults.standard.string(forKey: selectedVMKey).flatMap(
+      let selectedID = UserDefaults.standard.string(forKey: activeSelectedVMKey).flatMap(
         UUID.init(uuidString:))
       tableView?.reloadData()
       lastTableSignature = signature
@@ -2836,7 +2969,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       let selectedCount = selectedConfigurations.count
       let selectionSuffix = selectedCount > 1 ? localized(" %d selected.", selectedCount) : ""
       let availableStorage = availableStorageBytes(
-        at: FileManager.default.homeDirectoryForCurrentUser)
+        at: tartStorageURL)
       let storageSuffix =
         availableStorage.map {
           localized(" %@ available on the host volume.", storageByteString(UInt64(max($0, 0))))
@@ -3216,6 +3349,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       keyEquivalent: "")
     resetTart.target = self
     appMenu.addItem(resetTart)
+    let chooseTartHome = NSMenuItem(
+      title: localized("Choose Tart Home Directory…"), action: #selector(chooseTartHome),
+      keyEquivalent: "")
+    chooseTartHome.target = self
+    appMenu.addItem(chooseTartHome)
+    let resetTartHome = NSMenuItem(
+      title: localized("Restore Environment/Default Tart Home"), action: #selector(resetTartHome),
+      keyEquivalent: "")
+    resetTartHome.target = self
+    appMenu.addItem(resetTartHome)
     let environment = NSMenuItem(
       title: localized("Runtime Environment…"), action: #selector(showEnvironmentInfo),
       keyEquivalent: "")

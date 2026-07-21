@@ -3,6 +3,7 @@ zmodload zsh/system
 state_dir="${FAKE_TART_STATE_DIR:-/tmp/tartr-fake-state}"
 log_file="${FAKE_TART_LOG:-/tmp/tart-runner-worker-app-test.log}"
 mkdir -p "$state_dir"
+print -r -- "tart-home: ${TART_HOME:-<default>}" >> "$log_file"
 
 is_running() {
   local pid_file="$state_dir/$1.pid"

@@ -9,6 +9,7 @@ WORK="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/tartr-smoke.XXXXXX")"
 APP="$WORK/TartR.app"
 HOME_DIR="$WORK/home"
 STATE_DIR="$WORK/fake-state"
+TART_HOME_DIR="$WORK/tart-home"
 FAKE_LOG="$WORK/fake-tart.log"
 APP_STDOUT="$WORK/app.stdout"
 VM_STDOUT="$WORK/vm.stdout"
@@ -82,15 +83,16 @@ has_list_count_greater_than() {
 [[ -z "$(/usr/bin/pgrep -x TartR 2>/dev/null || true)" ]] \
   || fail "another TartR process is already running"
 
-/bin/mkdir -p "$HOME_DIR" "$STATE_DIR"
+/bin/mkdir -p "$HOME_DIR" "$STATE_DIR" "$TART_HOME_DIR"
 /usr/bin/ditto -x -k "$ZIP" "$WORK"
 /usr/bin/xattr -cr "$APP"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP"
 
 CFFIXED_USER_HOME="$HOME_DIR" HOME="$HOME_DIR" \
-  /usr/bin/swift "$ROOT/Tests/Fixtures/SeedVMPreferences.swift" "$RUNNING_VM" "$AUTOSTART_VM"
+  /usr/bin/swift "$ROOT/Tests/Fixtures/SeedVMPreferences.swift" \
+    --tart-home "$TART_HOME_DIR" "$RUNNING_VM" "$AUTOSTART_VM"
 
-FAKE_TART_STATE_DIR="$STATE_DIR" FAKE_TART_LOG="$FAKE_LOG" \
+TART_HOME="$TART_HOME_DIR" FAKE_TART_STATE_DIR="$STATE_DIR" FAKE_TART_LOG="$FAKE_LOG" \
   FAKE_TART_VMS="$RUNNING_VM $AUTOSTART_VM" \
   "$FAKE_TART" run "$RUNNING_VM" > "$VM_STDOUT" 2>&1 &
 VM_PID=$!
@@ -115,5 +117,7 @@ wait_for "reopen state synchronization" has_list_count_greater_than "$INITIAL_LI
   || fail "TartR attempted to start an already-running VM"
 [[ "$(/usr/bin/grep -c "^run-invoked: $AUTOSTART_VM$" "$FAKE_LOG")" == 1 ]] \
   || fail "TartR did not autostart the configured stopped VM exactly once"
+[[ "$(/usr/bin/grep '^tart-home:' "$FAKE_LOG" | /usr/bin/sort -u)" == "tart-home: $TART_HOME_DIR" ]] \
+  || fail "TartR did not apply the persisted TART_HOME to every Tart process"
 
 print "TartR packaged app smoke test passed for $SMOKE_LANGUAGE (PID $APP_PID, list syncs: $(list_count))."

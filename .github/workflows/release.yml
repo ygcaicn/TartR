@@ -16,7 +16,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Validate tag and version
         run: |
@@ -116,7 +116,7 @@ jobs:
           make verify
 
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           body: ${{ steps.signing.outputs.available == 'true' && '' || '⚠️ This build is ad-hoc signed because Developer ID and Apple notarization credentials were not configured. macOS Gatekeeper may require users to explicitly approve the app. SHA-256 checksums are included for every archive.' }}

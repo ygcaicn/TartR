@@ -15,6 +15,7 @@ All notable changes to TartR are documented here.
 
 - 英文成为开发语言，其他未提供翻译的系统语言安全回退到英文
 - Release workflow 在 Apple Developer ID/公证凭据齐全时发布签名公证构建；凭据缺失时仍可发布经过校验并带明确警告的 ad-hoc 构建
+- GitHub checkout、artifact 上传和 Release action 升级至最新 Node.js 24 运行时主版本
 
 ## 4.16.1 - 2026-07-20
 

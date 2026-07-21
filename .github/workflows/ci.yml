@@ -15,7 +15,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Swift version
         run: swift --version
       - name: Format lint
@@ -37,7 +37,7 @@ jobs:
         run: make manifest verify-manifest
       - name: Verify release
         run: make verify
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: TartR-development-release
           retention-days: 14

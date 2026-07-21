@@ -1279,55 +1279,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   @objc private func showMoreMenu(_ sender: NSButton) {
     let menu = NSMenu()
     let state = selectedConfiguration.flatMap { states[$0.id] } ?? .unknown
+    let canUseTart = tartInstalled && operationProcess == nil && updateDownloader == nil
     addMenuItem(
       localized("View Details…"), #selector(showSelectedDetails), to: menu,
+      enabled: canUseTart && selectedConfiguration != nil)
+    addMenuItem(
+      localized("Open Log"), #selector(openSelectedLog), to: menu,
       enabled: selectedConfiguration != nil)
     menu.addItem(.separator())
-    addMenuItem(localized("Import .tvm Archive…"), #selector(importVMArchive), to: menu)
+    addMenuItem(
+      localized("Import .tvm Archive…"), #selector(importVMArchive), to: menu,
+      enabled: canUseTart)
     addMenuItem(
       localized("Export as .tvm Archive…"), #selector(exportSelectedVM), to: menu,
-      enabled: selectedConfiguration != nil && !state.isRunning
+      enabled: canUseTart && selectedConfiguration != nil && !state.isRunning
         && selectedConfiguration.map { discoveredNames.contains($0.name) } == true)
     addMenuItem(
       localized("Clone VM…"), #selector(cloneSelectedVM), to: menu,
-      enabled: selectedConfiguration != nil && !state.isRunning)
+      enabled: canUseTart && selectedConfiguration != nil && !state.isRunning)
     addMenuItem(
       localized("Rename…"), #selector(renameSelectedVM), to: menu,
-      enabled: selectedConfiguration != nil && !state.isRunning)
+      enabled: canUseTart && selectedConfiguration != nil && !state.isRunning)
     addMenuItem(
       localized("Configure…"), #selector(configureSelectedVM), to: menu,
-      enabled: selectedConfiguration != nil && !state.isRunning)
+      enabled: canUseTart && selectedConfiguration != nil && !state.isRunning)
     addMenuItem(
       localized("Run Options…"), #selector(configureSelectedVMRunOptions), to: menu,
       enabled: selectedConfiguration != nil)
     addMenuItem(
       localized("Push to OCI Registry…"), #selector(pushSelectedVM), to: menu,
-      enabled: selectedConfiguration != nil && !state.isRunning)
+      enabled: canUseTart && selectedConfiguration != nil && !state.isRunning)
     #if arch(arm64)
       addMenuItem(
         localized("Run Once in Suspendable Mode"), #selector(startSelectedVMSuspendable), to: menu,
-        enabled: selectedConfiguration != nil && !state.isRunning)
+        enabled: canUseTart && selectedConfiguration != nil && !state.isRunning)
     #endif
     menu.addItem(.separator())
     addMenuItem(
-      localized("Copy IP Address"), #selector(copySelectedIP), to: menu, enabled: state.isRunning)
+      localized("Copy IP Address"), #selector(copySelectedIP), to: menu,
+      enabled: canUseTart && state.isRunning)
     addMenuItem(
       localized("Copy SSH Command and Open Terminal…"), #selector(copySSHCommandAndOpenTerminal),
       to: menu,
-      enabled: selectedConfiguration != nil && state.isRunning)
+      enabled: canUseTart && selectedConfiguration != nil && state.isRunning)
     addMenuItem(
       localized("Execute Command in VM…"), #selector(executeCommandInSelectedVM), to: menu,
-      enabled: selectedConfiguration != nil && state.isRunning)
+      enabled: canUseTart && selectedConfiguration != nil && state.isRunning)
     addMenuItem(
-      localized("Suspend VM"), #selector(suspendSelectedVM), to: menu, enabled: state.isRunning)
+      localized("Suspend VM"), #selector(suspendSelectedVM), to: menu,
+      enabled: canUseTart && state.isRunning)
     menu.addItem(.separator())
-    addMenuItem(localized("Create macOS VM from Latest IPSW…"), #selector(createMacVM), to: menu)
-    addMenuItem(localized("Create Blank Linux VM…"), #selector(createLinuxVM), to: menu)
-    addMenuItem(localized("Prune Tart Download Cache…"), #selector(pruneCaches), to: menu)
+    addMenuItem(
+      localized("Create macOS VM from Latest IPSW…"), #selector(createMacVM), to: menu,
+      enabled: canUseTart)
+    addMenuItem(
+      localized("Create Blank Linux VM…"), #selector(createLinuxVM), to: menu,
+      enabled: canUseTart)
+    addMenuItem(
+      localized("Prune Tart Download Cache…"), #selector(pruneCaches), to: menu,
+      enabled: canUseTart)
     menu.addItem(.separator())
+    addMenuItem(
+      localized("Remove Saved Record(s)…"), #selector(deleteSelectedVM), to: menu,
+      enabled: selectionCapabilities.canRemoveRecords)
     addMenuItem(
       localized("Delete VM and Disk…"), #selector(deleteVMAndDisk), to: menu,
-      enabled: selectedConfiguration != nil && !state.isRunning
+      enabled: canUseTart && selectedConfiguration != nil && !state.isRunning
         && selectedConfiguration.map { discoveredNames.contains($0.name) } == true)
     menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
   }
@@ -3122,7 +3139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   private func refreshControls() {
     let operationBusy = operationProcess != nil || updateDownloader != nil
     imageButton?.isEnabled = tartInstalled && !operationBusy
-    moreButton?.isEnabled = tartInstalled && !operationBusy
+    moreButton?.isEnabled = !operationBusy
     let capabilities = selectionCapabilities
     let count = capabilities.selectionCount
     startButton?.title =
@@ -3142,6 +3159,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       : nil
     startButton?.isEnabled = tartInstalled && !capabilities.startableIDs.isEmpty
     stopButton?.isEnabled = tartInstalled && !capabilities.stoppableIDs.isEmpty
+    let stopIsPrimary = capabilities.startableIDs.isEmpty && !capabilities.stoppableIDs.isEmpty
+    if let startButton, let stopButton {
+      setProminence(startButton, prominent: !stopIsPrimary && !capabilities.startableIDs.isEmpty)
+      setProminence(stopButton, prominent: stopIsPrimary)
+    }
     deleteButton?.isEnabled = capabilities.canRemoveRecords
     logButton?.isEnabled = capabilities.hasSingleSelection
   }
@@ -3320,16 +3342,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     return button
   }
 
+  private func setProminence(_ button: NSButton, prominent: Bool) {
+    button.bezelStyle = .rounded
+    button.bezelColor = prominent ? .controlAccentColor : nil
+    button.contentTintColor = prominent ? .white : nil
+  }
+
   private func metricCard(
     title: String, symbolName: String, color: NSColor, valueLabel: NSTextField
   ) -> NSBox {
     let card = NSBox()
     card.boxType = .custom
     card.titlePosition = .noTitle
-    card.cornerRadius = 12
-    card.fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.78)
-    card.borderColor = NSColor.separatorColor.withAlphaComponent(0.42)
-    card.borderWidth = 1
+    card.fillColor = .clear
+    card.borderWidth = 0
 
     let iconTile = NSBox()
     iconTile.boxType = .custom
@@ -3550,8 +3576,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     tableView.intercellSpacing = NSSize(width: 0, height: 0)
     tableView.usesAlternatingRowBackgroundColors = false
     tableView.backgroundColor = .clear
-    tableView.gridStyleMask = [.solidHorizontalGridLineMask]
-    tableView.gridColor = NSColor.separatorColor.withAlphaComponent(0.28)
+    tableView.gridStyleMask = []
     tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
     tableView.allowsEmptySelection = true
     tableView.allowsMultipleSelection = true
@@ -3608,15 +3633,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       localized("Open Log"), action: #selector(openSelectedLog), symbolName: "doc.text",
       compact: true)
     moreButton = makeButton(
-      localized("More Actions…"), action: #selector(showMoreMenu(_:)),
+      localized("Actions"), action: #selector(showMoreMenu(_:)),
       symbolName: "ellipsis.circle", compact: true)
+    moreButton.bezelStyle = .accessoryBarAction
     deleteButton = makeButton(
       localized("Remove Record"), action: #selector(deleteSelectedVM), symbolName: "trash",
       compact: true)
     deleteButton.contentTintColor = .systemRed
 
     let buttonRow = NSStackView(views: [
-      startButton, stopButton, moreButton, logButton, NSView(), deleteButton,
+      startButton, stopButton, moreButton, NSView(),
     ])
     buttonRow.orientation = .horizontal
     buttonRow.alignment = .centerY
@@ -3631,12 +3657,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       buttonRow.bottomAnchor.constraint(equalTo: actionContainer.bottomAnchor, constant: -9),
     ])
 
-    let headerSeparator = NSBox()
-    headerSeparator.boxType = .separator
-    let actionSeparator = NSBox()
-    actionSeparator.boxType = .separator
     let listContent = NSStackView(views: [
-      libraryHeaderContainer, headerSeparator, scrollView, actionSeparator, actionContainer,
+      libraryHeaderContainer, scrollView, actionContainer,
     ])
     listContent.orientation = .vertical
     listContent.alignment = .leading
@@ -3647,9 +3669,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     listBox.boxType = .custom
     listBox.titlePosition = .noTitle
     listBox.cornerRadius = 14
-    listBox.fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.84)
-    listBox.borderColor = NSColor.separatorColor.withAlphaComponent(0.48)
-    listBox.borderWidth = 1
+    listBox.fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.68)
+    listBox.borderWidth = 0
     listBox.contentView?.addSubview(listContent)
     NSLayoutConstraint.activate([
       listContent.leadingAnchor.constraint(
@@ -3659,10 +3680,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       listContent.topAnchor.constraint(equalTo: listBox.contentView!.topAnchor, constant: 1),
       listContent.bottomAnchor.constraint(equalTo: listBox.contentView!.bottomAnchor, constant: -1),
       libraryHeaderContainer.widthAnchor.constraint(equalTo: listContent.widthAnchor),
-      headerSeparator.widthAnchor.constraint(equalTo: listContent.widthAnchor),
       scrollView.widthAnchor.constraint(equalTo: listContent.widthAnchor),
       scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 220),
-      actionSeparator.widthAnchor.constraint(equalTo: listContent.widthAnchor),
       actionContainer.widthAnchor.constraint(equalTo: listContent.widthAnchor),
     ])
 

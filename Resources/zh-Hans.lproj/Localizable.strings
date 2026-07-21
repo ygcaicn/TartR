@@ -327,6 +327,7 @@
 "Stop %d" = "停止 %d 台";
 "Remove Records (%d)" = "移除记录（%d）";
 "Remove Record" = "移除记录";
+"Remove Saved Record(s)…" = "移除已保存记录…";
 "Run only selected VMs that can currently be started" = "只启动所选项目中当前可以启动的虚拟机";
 "Stop only selected VMs that are starting or running" = "只停止所选项目中正在启动或运行的虚拟机";
 "Bulk removal applies only to saved records missing locally and never deletes disks" = "仅可批量移除本地不存在的保存记录，不会删除磁盘";
@@ -348,7 +349,7 @@
 "Actual Size" = "实际占用";
 "Run When App Opens" = "打开 App 时启动";
 "Open Log" = "打开日志";
-"More Actions…" = "更多操作…";
+"Actions" = "操作";
 "Cancel Operation" = "取消操作";
 "Live status syncs every 5 seconds. TartR never restarts a VM that is already running." = "每 5 秒同步实时状态；TartR 不会重复启动已经运行的虚拟机。";
 

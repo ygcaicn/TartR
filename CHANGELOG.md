@@ -2,6 +2,14 @@
 
 All notable changes to TartR are documented here.
 
+## 26.07.21 - 2026-07-21
+
+### Changed
+
+- 正式版本改用 `YY.MM.DD` 日历日期格式，Git 标签固定为对应的 `vYY.MM.DD`
+- App 构建号改用 Apple 兼容的 `YYYY.M.D`，并由发布校验根据版本日期自动核对
+- 构建、测试、更新 manifest 和 GitHub Release 统一拒绝旧式版本号、无效日期及不匹配标签
+
 ## 5.2.0 - 2026-07-21
 
 ### Changed

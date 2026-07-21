@@ -1,4 +1,4 @@
-.PHONY: test format localization check compat build smoke dmg manifest verify verify-dmg verify-manifest source notarize clean
+.PHONY: test format localization version check compat build smoke dmg manifest verify verify-dmg verify-manifest source notarize clean
 
 test:
 	swift test
@@ -9,7 +9,11 @@ localization:
 format:
 	swift format --in-place --recursive Sources Tests Package.swift
 
+version:
+	Scripts/validate-version.sh
+
 check:
+	$(MAKE) version
 	swift format lint --strict --recursive Sources Tests Package.swift
 	$(MAKE) localization
 	swift test

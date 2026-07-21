@@ -30,6 +30,27 @@ public struct AppVersion: Comparable, Equatable, Sendable {
   }
 }
 
+public enum ReleaseVersionFormat {
+  public static func isValid(_ value: String) -> Bool {
+    let parts = value.split(separator: ".", omittingEmptySubsequences: false)
+    guard parts.count == 3,
+      parts.allSatisfy({ $0.count == 2 && $0.allSatisfy(\.isNumber) }),
+      let year = Int(parts[0]),
+      let month = Int(parts[1]),
+      let day = Int(parts[2])
+    else { return false }
+
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    guard
+      let date = calendar.date(
+        from: DateComponents(year: 2_000 + year, month: month, day: day))
+    else { return false }
+    let normalized = calendar.dateComponents([.year, .month, .day], from: date)
+    return normalized.year == 2_000 + year && normalized.month == month && normalized.day == day
+  }
+}
+
 public struct UpdateManifest: Codable, Equatable, Sendable {
   public let schemaVersion: Int
   public let version: String
@@ -72,6 +93,7 @@ public enum UpdateManifestValidation {
 
   public static func validate(_ manifest: UpdateManifest) -> ValidatedUpdateManifest? {
     guard manifest.schemaVersion == 1,
+      ReleaseVersionFormat.isValid(manifest.version),
       let version = AppVersion(manifest.version),
       let minimumSystemVersion = AppVersion(manifest.minimumSystemVersion),
       let downloadURL = SecureURLValidation.parseSecureHTTPS(manifest.downloadURL),

@@ -16,11 +16,13 @@ When these secrets are incomplete, the workflow intentionally falls back to a ve
 
 ## Release process
 
-1. Update `CFBundleShortVersionString` and `CFBundleVersion` in `Resources/Info.plist`.
+TartR uses calendar versions. `CFBundleShortVersionString` is the release date in `YY.MM.DD` form, the Git tag is `vYY.MM.DD`, and `CFBundleVersion` is the same date in Apple-compatible `YYYY.M.D` form. For example, the 2026-07-21 release uses version `26.07.21`, tag `v26.07.21`, and build `2026.7.21`. A date may have only one stable release; defer additional changes to the next date instead of adding an ad-hoc suffix.
+
+1. Update `CFBundleShortVersionString` and `CFBundleVersion` in `Resources/Info.plist`, then run `make version`.
 2. Add the release section to `CHANGELOG.md`.
 3. Install the current Tart release, then run `make check`, `make compat`, `make build`, `make smoke`, and `make verify` locally.
 4. Commit the release changes.
-5. Create and push an annotated tag matching the version exactly, for example `v4.16.1`.
+5. Create and push an annotated tag matching the version exactly, for example `v26.07.21`.
 6. The Release workflow injects the repository-specific HTTPS update manifest URL, builds both architectures, verifies both localizations, ZIP/DMG/update manifest, and publishes binaries plus checksums, update metadata, and source. When all Apple secrets are present it also imports the certificate into an ephemeral keychain, signs with Hardened Runtime, and notarizes and staples both the App and DMG.
 
 The stable update endpoint is `https://github.com/<owner>/<repo>/releases/latest/download/TartR-update.json`. The manifest includes the exact DMG byte size and SHA-256 used by in-app verified downloads. Local builds leave `TartRUpdateManifestURL` empty and do not make automatic update requests.

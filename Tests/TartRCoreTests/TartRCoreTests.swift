@@ -43,21 +43,27 @@ final class TartRCoreTests: XCTestCase {
     XCTAssertFalse(SecureURLValidation.isSecureHTTPS(URL(string: "http://example.com/file")))
     XCTAssertFalse(
       SecureURLValidation.isSecureHTTPS(URL(string: "https://user:secret@example.com/file")))
-    XCTAssertLessThan(AppVersion("4.10.0")!, AppVersion("4.11")!)
-    XCTAssertEqual(AppVersion("v4.11.0"), AppVersion("4.11"))
+    XCTAssertLessThan(AppVersion("26.07.20")!, AppVersion("26.07.21")!)
+    XCTAssertLessThan(AppVersion("26.12.31")!, AppVersion("27.01.01")!)
+    XCTAssertEqual(AppVersion("v26.07.21"), AppVersion("26.7.21"))
     XCTAssertNil(AppVersion("4.11-beta"))
     XCTAssertNil(AppVersion("4..11"))
+    XCTAssertTrue(ReleaseVersionFormat.isValid("26.07.21"))
+    XCTAssertTrue(ReleaseVersionFormat.isValid("24.02.29"))
+    XCTAssertFalse(ReleaseVersionFormat.isValid("26.7.21"))
+    XCTAssertFalse(ReleaseVersionFormat.isValid("26.02.29"))
+    XCTAssertFalse(ReleaseVersionFormat.isValid("v26.07.21"))
 
     let manifest = UpdateManifest(
       schemaVersion: 1,
-      version: "4.11.0",
+      version: "26.07.21",
       minimumSystemVersion: "13.0",
-      downloadURL: "https://example.com/TartR-4.11.0-macos.dmg",
-      releaseNotesURL: "https://example.com/releases/v4.11.0",
+      downloadURL: "https://example.com/TartR-26.07.21-macos.dmg",
+      releaseNotesURL: "https://example.com/releases/v26.07.21",
       sha256: String(repeating: "a", count: 64),
       fileSize: 1_234_567)
     let validated = UpdateManifestValidation.validate(manifest)
-    XCTAssertEqual(validated?.version, AppVersion("4.11.0"))
+    XCTAssertEqual(validated?.version, AppVersion("26.07.21"))
     XCTAssertEqual(validated?.minimumSystemVersion, AppVersion("13"))
     XCTAssertEqual(validated?.sha256, String(repeating: "a", count: 64))
     XCTAssertEqual(validated?.fileSize, 1_234_567)
@@ -66,7 +72,7 @@ final class TartRCoreTests: XCTestCase {
       UpdateManifestValidation.validate(
         UpdateManifest(
           schemaVersion: 1,
-          version: "4.11.0",
+          version: "26.07.21",
           minimumSystemVersion: "13.0",
           downloadURL: "http://example.com/TartR.dmg",
           releaseNotesURL: "https://user:password@example.com/release",
@@ -75,12 +81,21 @@ final class TartRCoreTests: XCTestCase {
       UpdateManifestValidation.validate(
         UpdateManifest(
           schemaVersion: 1,
-          version: "4.11.0",
+          version: "26.07.21",
           minimumSystemVersion: "13.0",
           downloadURL: "https://example.com/TartR.dmg",
           releaseNotesURL: "https://example.com/release",
           sha256: String(repeating: "a", count: 64),
           fileSize: UpdateManifestValidation.maximumPackageBytes + 1)))
+    XCTAssertNil(
+      UpdateManifestValidation.validate(
+        UpdateManifest(
+          schemaVersion: 1,
+          version: "5.2.0",
+          minimumSystemVersion: "13.0",
+          downloadURL: "https://example.com/TartR.dmg",
+          releaseNotesURL: "https://example.com/release",
+          sha256: String(repeating: "a", count: 64))))
   }
 
   func testUpdatePackageVerificationStreamsAndValidatesPackage() throws {

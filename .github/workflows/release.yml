@@ -19,9 +19,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Validate tag and version
-        run: |
-          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)
-          test "v$VERSION" = "$GITHUB_REF_NAME"
+        run: Scripts/validate-version.sh "$GITHUB_REF_NAME"
 
       - name: Verify current Tart CLI compatibility
         run: |

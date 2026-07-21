@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="${0:A:h:h}"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT/Resources/Info.plist")"
+EXPECTED_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$ROOT/Resources/Info.plist")"
 ZIP="$ROOT/outputs/TartR-$VERSION-macos.zip"
 VERIFY_DIR="${TMPDIR:-/tmp}/tartr-release-verify-$$"
 APP="$VERIFY_DIR/TartR.app"
@@ -36,7 +37,7 @@ BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Conten
 BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")"
 EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
 [[ "$ACTUAL_VERSION" == "$VERSION" ]]
-[[ "$BUILD_NUMBER" == <-> ]]
+[[ "$BUILD_NUMBER" == "$EXPECTED_BUILD" ]]
 [[ "$BUNDLE_ID" == "$EXPECTED_BUNDLE_ID" ]]
 [[ "$EXECUTABLE" == "TartR" ]]
 

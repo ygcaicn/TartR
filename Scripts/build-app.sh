@@ -13,6 +13,8 @@ UPDATE_MANIFEST_URL="${UPDATE_MANIFEST_URL:-}"
 
 trap '/bin/rm -rf "$STAGING_ROOT"' EXIT
 
+"$ROOT/Scripts/validate-version.sh"
+
 if [[ -n "$UPDATE_MANIFEST_URL" && "$UPDATE_MANIFEST_URL" != https://* ]]; then
   print -u2 "UPDATE_MANIFEST_URL must use HTTPS."
   exit 1

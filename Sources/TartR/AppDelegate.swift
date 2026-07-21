@@ -44,6 +44,20 @@ private final class VMRuntime {
   }
 }
 
+private final class VMTableRowView: NSTableRowView {
+  override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
+
+  override func drawSelection(in dirtyRect: NSRect) {
+    guard selectionHighlightStyle != .none else { return }
+    NSColor.controlAccentColor.withAlphaComponent(0.12).setFill()
+    NSBezierPath(
+      roundedRect: bounds.insetBy(dx: 6, dy: 4),
+      xRadius: 8,
+      yRadius: 8
+    ).fill()
+  }
+}
+
 private final class LimitedHTTPDataLoader: NSObject, URLSessionDataDelegate, @unchecked Sendable {
   private let maximumBytes: Int
   private let completion: (Data?, URLResponse?, Error?) -> Void
@@ -320,6 +334,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   private var moreButton: NSButton!
   private var summaryLabel: NSTextField!
   private var tartHomeLabel: NSTextField!
+  private var totalVMMetricLabel: NSTextField!
+  private var runningVMMetricLabel: NSTextField!
+  private var storageMetricLabel: NSTextField!
   private var installBox: NSBox!
   private var operationLabel: NSTextField!
   private var operationSpinner: NSProgressIndicator!
@@ -610,6 +627,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       UserDefaults.standard.set(selected.id.uuidString, forKey: activeSelectedVMKey)
     }
     refreshUI()
+  }
+
+  func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+    VMTableRowView()
   }
 
   func tableView(
@@ -3056,17 +3077,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       return false
     }.count
     let total = configurations.count
+    let availableStorage = availableStorageBytes(at: tartStorageURL)
+    totalVMMetricLabel?.stringValue = String(total)
+    runningVMMetricLabel?.stringValue = String(runningCount)
+    storageMetricLabel?.stringValue =
+      availableStorage.map {
+        storageByteString(UInt64(max($0, 0)))
+      } ?? "—"
     let isFiltering =
       !(searchField?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
       .isEmpty ?? true)
     if let tartSyncError, !tartSyncError.isEmpty {
+      summaryLabel?.isHidden = false
       summaryLabel?.stringValue = localized("Unable to synchronize Tart: %@", tartSyncError)
       summaryLabel?.textColor = .systemRed
     } else {
       let selectedCount = selectedConfigurations.count
       let selectionSuffix = selectedCount > 1 ? localized(" %d selected.", selectedCount) : ""
-      let availableStorage = availableStorageBytes(
-        at: tartStorageURL)
       let storageSuffix =
         availableStorage.map {
           localized(" %@ available on the host volume.", storageByteString(UInt64(max($0, 0))))
@@ -3085,9 +3112,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             + storageSuffix
       }
       let lowStorageThreshold: Int64 = 15 * 1_024 * 1_024 * 1_024
+      let hasLowStorage = availableStorage.map { $0 < lowStorageThreshold } == true
+      summaryLabel?.isHidden = !isFiltering && selectedCount <= 1 && !hasLowStorage
       summaryLabel?.textColor =
-        availableStorage.map { $0 < lowStorageThreshold } == true
-        ? .systemOrange : .secondaryLabelColor
+        hasLowStorage ? .systemOrange : .secondaryLabelColor
     }
   }
 
@@ -3186,24 +3214,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   ) -> NSTableCellView {
     let cell = NSTableCellView()
     cell.identifier = identifier
+    let tile = NSBox()
+    tile.boxType = .custom
+    tile.titlePosition = .noTitle
+    tile.cornerRadius = 7
+    tile.fillColor = NSColor.controlAccentColor.withAlphaComponent(0.11)
+    tile.borderWidth = 0
+    tile.translatesAutoresizingMaskIntoConstraints = false
     let icon = NSImageView()
     icon.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
     icon.contentTintColor = .controlAccentColor
-    icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
+    icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
     icon.translatesAutoresizingMaskIntoConstraints = false
     let label = NSTextField(labelWithString: text)
     label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
     label.lineBreakMode = .byTruncatingTail
     label.translatesAutoresizingMaskIntoConstraints = false
     cell.textField = label
-    cell.addSubview(icon)
+    tile.contentView?.addSubview(icon)
+    cell.addSubview(tile)
     cell.addSubview(label)
     NSLayoutConstraint.activate([
-      icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
-      icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-      icon.widthAnchor.constraint(equalToConstant: 18),
-      icon.heightAnchor.constraint(equalToConstant: 18),
-      label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
+      tile.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
+      tile.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+      tile.widthAnchor.constraint(equalToConstant: 30),
+      tile.heightAnchor.constraint(equalToConstant: 30),
+      icon.centerXAnchor.constraint(equalTo: tile.contentView!.centerXAnchor),
+      icon.centerYAnchor.constraint(equalTo: tile.contentView!.centerYAnchor),
+      icon.widthAnchor.constraint(equalToConstant: 17),
+      icon.heightAnchor.constraint(equalToConstant: 17),
+      label.leadingAnchor.constraint(equalTo: tile.trailingAnchor, constant: 10),
       label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
       label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
     ])
@@ -3215,26 +3255,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   {
     let cell = NSTableCellView()
     cell.identifier = identifier
+    let badge = NSBox()
+    badge.boxType = .custom
+    badge.titlePosition = .noTitle
+    badge.cornerRadius = 11
+    badge.fillColor = statusColor(for: state).withAlphaComponent(0.11)
+    badge.borderWidth = 0
+    badge.translatesAutoresizingMaskIntoConstraints = false
     let dot = NSView()
     dot.wantsLayer = true
     dot.layer?.backgroundColor = statusColor(for: state).cgColor
-    dot.layer?.cornerRadius = 4
+    dot.layer?.cornerRadius = 3
     dot.translatesAutoresizingMaskIntoConstraints = false
     let label = NSTextField(labelWithString: state.label)
-    label.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+    label.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
     label.textColor = statusColor(for: state)
     label.translatesAutoresizingMaskIntoConstraints = false
     cell.textField = label
-    cell.addSubview(dot)
-    cell.addSubview(label)
+    badge.contentView?.addSubview(dot)
+    badge.contentView?.addSubview(label)
+    cell.addSubview(badge)
     NSLayoutConstraint.activate([
-      dot.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
-      dot.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-      dot.widthAnchor.constraint(equalToConstant: 8),
-      dot.heightAnchor.constraint(equalToConstant: 8),
+      badge.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+      badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+      badge.heightAnchor.constraint(equalToConstant: 24),
+      badge.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -8),
+      dot.leadingAnchor.constraint(equalTo: badge.contentView!.leadingAnchor, constant: 9),
+      dot.centerYAnchor.constraint(equalTo: badge.contentView!.centerYAnchor),
+      dot.widthAnchor.constraint(equalToConstant: 6),
+      dot.heightAnchor.constraint(equalToConstant: 6),
       label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 7),
-      label.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -8),
-      label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+      label.trailingAnchor.constraint(equalTo: badge.contentView!.trailingAnchor, constant: -9),
+      label.centerYAnchor.constraint(equalTo: badge.contentView!.centerYAnchor),
     ])
     return cell
   }
@@ -3251,11 +3303,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   private func makeButton(
-    _ title: String, action: Selector, symbolName: String? = nil, prominent: Bool = false
+    _ title: String, action: Selector, symbolName: String? = nil, prominent: Bool = false,
+    compact: Bool = false
   ) -> NSButton {
     let button = NSButton(title: title, target: self, action: action)
     button.bezelStyle = .rounded
-    button.controlSize = .large
+    button.controlSize = compact ? .regular : .large
     if let symbolName {
       button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
       button.imagePosition = .imageLeading
@@ -3267,9 +3320,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     return button
   }
 
+  private func metricCard(
+    title: String, symbolName: String, color: NSColor, valueLabel: NSTextField
+  ) -> NSBox {
+    let card = NSBox()
+    card.boxType = .custom
+    card.titlePosition = .noTitle
+    card.cornerRadius = 12
+    card.fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.78)
+    card.borderColor = NSColor.separatorColor.withAlphaComponent(0.42)
+    card.borderWidth = 1
+
+    let iconTile = NSBox()
+    iconTile.boxType = .custom
+    iconTile.titlePosition = .noTitle
+    iconTile.cornerRadius = 9
+    iconTile.fillColor = color.withAlphaComponent(0.12)
+    iconTile.borderWidth = 0
+    iconTile.translatesAutoresizingMaskIntoConstraints = false
+    let icon = NSImageView()
+    icon.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
+    icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+    icon.contentTintColor = color
+    icon.translatesAutoresizingMaskIntoConstraints = false
+    iconTile.contentView?.addSubview(icon)
+
+    valueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 20, weight: .semibold)
+    valueLabel.textColor = .labelColor
+    let titleLabel = NSTextField(labelWithString: title)
+    titleLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+    titleLabel.textColor = .secondaryLabelColor
+    let labels = NSStackView(views: [valueLabel, titleLabel])
+    labels.orientation = .vertical
+    labels.alignment = .leading
+    labels.spacing = 1
+    let row = NSStackView(views: [iconTile, labels, NSView()])
+    row.orientation = .horizontal
+    row.alignment = .centerY
+    row.spacing = 11
+    row.translatesAutoresizingMaskIntoConstraints = false
+    card.contentView?.addSubview(row)
+
+    NSLayoutConstraint.activate([
+      iconTile.widthAnchor.constraint(equalToConstant: 38),
+      iconTile.heightAnchor.constraint(equalToConstant: 38),
+      icon.centerXAnchor.constraint(equalTo: iconTile.contentView!.centerXAnchor),
+      icon.centerYAnchor.constraint(equalTo: iconTile.contentView!.centerYAnchor),
+      icon.widthAnchor.constraint(equalToConstant: 20),
+      icon.heightAnchor.constraint(equalToConstant: 20),
+      row.leadingAnchor.constraint(equalTo: card.contentView!.leadingAnchor, constant: 14),
+      row.trailingAnchor.constraint(equalTo: card.contentView!.trailingAnchor, constant: -12),
+      row.topAnchor.constraint(equalTo: card.contentView!.topAnchor, constant: 11),
+      row.bottomAnchor.constraint(equalTo: card.contentView!.bottomAnchor, constant: -11),
+    ])
+    return card
+  }
+
   private func buildWindow() {
     window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 980, height: 650),
+      contentRect: NSRect(x: 0, y: 0, width: 1040, height: 700),
       styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
       backing: .buffered,
       defer: false
@@ -3280,7 +3389,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     window.toolbarStyle = .unified
     window.center()
     window.setFrameAutosaveName("TartRMainWindow")
-    window.minSize = NSSize(width: 820, height: 560)
+    window.minSize = NSSize(width: 880, height: 600)
     window.isReleasedWhenClosed = false
     window.delegate = self
 
@@ -3291,15 +3400,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     window.contentView = background
 
     let appIcon = NSImageView()
-    appIcon.image = NSImage(
-      systemSymbolName: "shippingbox.fill", accessibilityDescription: appTitle)
-    appIcon.contentTintColor = .controlAccentColor
-    appIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 27, weight: .semibold)
-    appIcon.widthAnchor.constraint(equalToConstant: 40).isActive = true
-    appIcon.heightAnchor.constraint(equalToConstant: 40).isActive = true
+    appIcon.image = NSApp.applicationIconImage
+    appIcon.imageScaling = .scaleProportionallyUpOrDown
+    appIcon.setAccessibilityLabel(appTitle)
+    appIcon.widthAnchor.constraint(equalToConstant: 48).isActive = true
+    appIcon.heightAnchor.constraint(equalToConstant: 48).isActive = true
 
-    let heading = NSTextField(labelWithString: localized("Virtual Machines"))
-    heading.font = NSFont.systemFont(ofSize: 25, weight: .bold)
+    let heading = NSTextField(labelWithString: appTitle)
+    heading.font = NSFont.systemFont(ofSize: 28, weight: .bold)
     tartHomeLabel = NSTextField(labelWithString: tartHomeDescription)
     tartHomeLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
     tartHomeLabel.textColor = .secondaryLabelColor
@@ -3311,7 +3419,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     let brandRow = NSStackView(views: [appIcon, headingLabels])
     brandRow.orientation = .horizontal
     brandRow.alignment = .centerY
-    brandRow.spacing = 10
+    brandRow.spacing = 12
 
     searchField = NSSearchField()
     searchField.placeholderString = localized("Search VMs")
@@ -3319,18 +3427,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     searchField.sendsSearchStringImmediately = true
     searchField.target = self
     searchField.action = #selector(searchChanged)
-    searchField.widthAnchor.constraint(equalToConstant: 220).isActive = true
+    searchField.widthAnchor.constraint(equalToConstant: 240).isActive = true
     imageButton = makeButton(
-      localized("Download/Clone Image…"), action: #selector(downloadImage),
-      symbolName: "plus.circle.fill", prominent: true)
+      localized("New Virtual Machine…"), action: #selector(downloadImage),
+      symbolName: "plus", prominent: true)
     let headingRow = NSStackView(views: [brandRow, NSView(), searchField, imageButton])
     headingRow.orientation = .horizontal
     headingRow.alignment = .centerY
-    headingRow.spacing = 12
+    headingRow.spacing = 14
+
+    totalVMMetricLabel = NSTextField(labelWithString: "0")
+    runningVMMetricLabel = NSTextField(labelWithString: "0")
+    storageMetricLabel = NSTextField(labelWithString: "—")
+    let totalCard = metricCard(
+      title: localized("Total VMs"), symbolName: "square.stack.3d.up.fill", color: .systemBlue,
+      valueLabel: totalVMMetricLabel)
+    let runningCard = metricCard(
+      title: localized("Running"), symbolName: "play.circle.fill", color: .systemGreen,
+      valueLabel: runningVMMetricLabel)
+    let storageCard = metricCard(
+      title: localized("Host Storage Available"), symbolName: "internaldrive.fill",
+      color: .systemIndigo, valueLabel: storageMetricLabel)
+    let metricRow = NSStackView(views: [totalCard, runningCard, storageCard])
+    metricRow.orientation = .horizontal
+    metricRow.distribution = .fillEqually
+    metricRow.spacing = 12
 
     summaryLabel = NSTextField(labelWithString: "")
     summaryLabel.textColor = .secondaryLabelColor
-    summaryLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+    summaryLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+    summaryLabel.lineBreakMode = .byTruncatingTail
 
     installBox = NSBox()
     installBox.boxType = .custom
@@ -3343,14 +3469,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       wrappingLabelWithString: localized(
         "Tart was not detected. Install it with Homebrew: brew install cirruslabs/cli/tart"))
     installLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-    let installButton = NSButton(
-      title: localized("Copy Command and Open Terminal"), target: self,
-      action: #selector(copyInstallCommandAndOpenTerminal))
-    let chooseTartButton = NSButton(
-      title: localized("Choose Existing Tart…"), target: self,
-      action: #selector(chooseTartExecutable))
-    let docsButton = NSButton(
-      title: localized("Installation Guide"), target: self, action: #selector(openQuickStart))
+    let installButton = makeButton(
+      localized("Copy Command and Open Terminal"),
+      action: #selector(copyInstallCommandAndOpenTerminal),
+      symbolName: "terminal", compact: true)
+    let chooseTartButton = makeButton(
+      localized("Choose Existing Tart…"), action: #selector(chooseTartExecutable),
+      symbolName: "folder", compact: true)
+    let docsButton = makeButton(
+      localized("Installation Guide"), action: #selector(openQuickStart),
+      symbolName: "book", compact: true)
     let installButtons = NSStackView(views: [installButton, chooseTartButton, docsButton, NSView()])
     installButtons.orientation = .horizontal
     installButtons.spacing = 10
@@ -3372,46 +3500,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     installBox.isHidden = true
 
     nameField = NSTextField()
-    nameField.placeholderString = localized(
-      "Add a VM name manually (local VMs are usually discovered automatically)")
+    nameField.placeholderString = localized("Add saved VM by name")
     nameField.setAccessibilityLabel(localized("Add VM name manually"))
     nameField.delegate = self
-    nameField.font = NSFont.systemFont(ofSize: 13)
+    nameField.font = NSFont.systemFont(ofSize: 12)
+    nameField.widthAnchor.constraint(equalToConstant: 230).isActive = true
 
-    addButton = makeButton(localized("Add"), action: #selector(addVM), symbolName: "plus")
+    addButton = makeButton(
+      localized("Add"), action: #selector(addVM), symbolName: "plus", compact: true)
     addButton.isEnabled = false
-    addButton.widthAnchor.constraint(equalToConstant: 88).isActive = true
+    addButton.widthAnchor.constraint(equalToConstant: 78).isActive = true
 
     let inputRow = NSStackView(views: [nameField, addButton])
     inputRow.orientation = .horizontal
-    inputRow.spacing = 10
+    inputRow.alignment = .centerY
+    inputRow.spacing = 8
 
-    let quickAddBox = NSBox()
-    quickAddBox.boxType = .custom
-    quickAddBox.titlePosition = .noTitle
-    quickAddBox.cornerRadius = 10
-    quickAddBox.fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.72)
-    quickAddBox.borderColor = NSColor.separatorColor.withAlphaComponent(0.55)
-    quickAddBox.borderWidth = 1
-    inputRow.translatesAutoresizingMaskIntoConstraints = false
-    quickAddBox.contentView?.addSubview(inputRow)
+    let libraryTitle = NSTextField(labelWithString: localized("Virtual Machines"))
+    libraryTitle.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
+    let libraryCaption = NSTextField(
+      labelWithString: localized("Local VMs are discovered automatically"))
+    libraryCaption.font = NSFont.systemFont(ofSize: 10.5, weight: .regular)
+    libraryCaption.textColor = .secondaryLabelColor
+    let libraryLabels = NSStackView(views: [libraryTitle, libraryCaption])
+    libraryLabels.orientation = .vertical
+    libraryLabels.alignment = .leading
+    libraryLabels.spacing = 1
+    let libraryHeader = NSStackView(views: [libraryLabels, NSView(), inputRow])
+    libraryHeader.orientation = .horizontal
+    libraryHeader.alignment = .centerY
+    libraryHeader.spacing = 12
+    libraryHeader.translatesAutoresizingMaskIntoConstraints = false
+    let libraryHeaderContainer = NSView()
+    libraryHeaderContainer.addSubview(libraryHeader)
     NSLayoutConstraint.activate([
-      inputRow.leadingAnchor.constraint(
-        equalTo: quickAddBox.contentView!.leadingAnchor, constant: 12),
-      inputRow.trailingAnchor.constraint(
-        equalTo: quickAddBox.contentView!.trailingAnchor, constant: -12),
-      inputRow.topAnchor.constraint(equalTo: quickAddBox.contentView!.topAnchor, constant: 9),
-      inputRow.bottomAnchor.constraint(
-        equalTo: quickAddBox.contentView!.bottomAnchor, constant: -9),
+      libraryHeader.leadingAnchor.constraint(
+        equalTo: libraryHeaderContainer.leadingAnchor, constant: 14),
+      libraryHeader.trailingAnchor.constraint(
+        equalTo: libraryHeaderContainer.trailingAnchor, constant: -14),
+      libraryHeader.topAnchor.constraint(equalTo: libraryHeaderContainer.topAnchor, constant: 10),
+      libraryHeader.bottomAnchor.constraint(
+        equalTo: libraryHeaderContainer.bottomAnchor, constant: -10),
     ])
 
     tableView = NSTableView()
     tableView.delegate = self
     tableView.dataSource = self
-    tableView.rowHeight = 46
-    tableView.intercellSpacing = NSSize(width: 0, height: 2)
+    tableView.rowHeight = 52
+    tableView.intercellSpacing = NSSize(width: 0, height: 0)
     tableView.usesAlternatingRowBackgroundColors = false
     tableView.backgroundColor = .clear
+    tableView.gridStyleMask = [.solidHorizontalGridLineMask]
+    tableView.gridColor = NSColor.separatorColor.withAlphaComponent(0.28)
+    tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
     tableView.allowsEmptySelection = true
     tableView.allowsMultipleSelection = true
     tableView.setAccessibilityLabel(localized("Tart VM List"))
@@ -3458,42 +3599,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     scrollView.borderType = .noBorder
     scrollView.drawsBackground = false
 
-    let listBox = NSBox()
-    listBox.boxType = .custom
-    listBox.titlePosition = .noTitle
-    listBox.cornerRadius = 12
-    listBox.fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.86)
-    listBox.borderColor = NSColor.separatorColor.withAlphaComponent(0.65)
-    listBox.borderWidth = 1
-    scrollView.translatesAutoresizingMaskIntoConstraints = false
-    listBox.contentView?.addSubview(scrollView)
-    NSLayoutConstraint.activate([
-      scrollView.leadingAnchor.constraint(equalTo: listBox.contentView!.leadingAnchor, constant: 1),
-      scrollView.trailingAnchor.constraint(
-        equalTo: listBox.contentView!.trailingAnchor, constant: -1),
-      scrollView.topAnchor.constraint(equalTo: listBox.contentView!.topAnchor, constant: 1),
-      scrollView.bottomAnchor.constraint(equalTo: listBox.contentView!.bottomAnchor, constant: -1),
-    ])
-
     startButton = makeButton(
       localized("Run"), action: #selector(startSelectedVM), symbolName: "play.fill",
-      prominent: true)
+      prominent: true, compact: true)
     stopButton = makeButton(
-      localized("Stop"), action: #selector(stopSelectedVM), symbolName: "stop.fill")
+      localized("Stop"), action: #selector(stopSelectedVM), symbolName: "stop.fill", compact: true)
     logButton = makeButton(
-      localized("Open Log"), action: #selector(openSelectedLog), symbolName: "doc.text")
+      localized("Open Log"), action: #selector(openSelectedLog), symbolName: "doc.text",
+      compact: true)
     moreButton = makeButton(
       localized("More Actions…"), action: #selector(showMoreMenu(_:)),
-      symbolName: "ellipsis.circle")
+      symbolName: "ellipsis.circle", compact: true)
     deleteButton = makeButton(
-      localized("Remove Record"), action: #selector(deleteSelectedVM), symbolName: "trash")
+      localized("Remove Record"), action: #selector(deleteSelectedVM), symbolName: "trash",
+      compact: true)
     deleteButton.contentTintColor = .systemRed
 
     let buttonRow = NSStackView(views: [
       startButton, stopButton, moreButton, logButton, NSView(), deleteButton,
     ])
     buttonRow.orientation = .horizontal
-    buttonRow.spacing = 10
+    buttonRow.alignment = .centerY
+    buttonRow.spacing = 8
+    buttonRow.translatesAutoresizingMaskIntoConstraints = false
+    let actionContainer = NSView()
+    actionContainer.addSubview(buttonRow)
+    NSLayoutConstraint.activate([
+      buttonRow.leadingAnchor.constraint(equalTo: actionContainer.leadingAnchor, constant: 12),
+      buttonRow.trailingAnchor.constraint(equalTo: actionContainer.trailingAnchor, constant: -12),
+      buttonRow.topAnchor.constraint(equalTo: actionContainer.topAnchor, constant: 9),
+      buttonRow.bottomAnchor.constraint(equalTo: actionContainer.bottomAnchor, constant: -9),
+    ])
+
+    let headerSeparator = NSBox()
+    headerSeparator.boxType = .separator
+    let actionSeparator = NSBox()
+    actionSeparator.boxType = .separator
+    let listContent = NSStackView(views: [
+      libraryHeaderContainer, headerSeparator, scrollView, actionSeparator, actionContainer,
+    ])
+    listContent.orientation = .vertical
+    listContent.alignment = .leading
+    listContent.spacing = 0
+    listContent.translatesAutoresizingMaskIntoConstraints = false
+
+    let listBox = NSBox()
+    listBox.boxType = .custom
+    listBox.titlePosition = .noTitle
+    listBox.cornerRadius = 14
+    listBox.fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.84)
+    listBox.borderColor = NSColor.separatorColor.withAlphaComponent(0.48)
+    listBox.borderWidth = 1
+    listBox.contentView?.addSubview(listContent)
+    NSLayoutConstraint.activate([
+      listContent.leadingAnchor.constraint(
+        equalTo: listBox.contentView!.leadingAnchor, constant: 1),
+      listContent.trailingAnchor.constraint(
+        equalTo: listBox.contentView!.trailingAnchor, constant: -1),
+      listContent.topAnchor.constraint(equalTo: listBox.contentView!.topAnchor, constant: 1),
+      listContent.bottomAnchor.constraint(equalTo: listBox.contentView!.bottomAnchor, constant: -1),
+      libraryHeaderContainer.widthAnchor.constraint(equalTo: listContent.widthAnchor),
+      headerSeparator.widthAnchor.constraint(equalTo: listContent.widthAnchor),
+      scrollView.widthAnchor.constraint(equalTo: listContent.widthAnchor),
+      scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 220),
+      actionSeparator.widthAnchor.constraint(equalTo: listContent.widthAnchor),
+      actionContainer.widthAnchor.constraint(equalTo: listContent.widthAnchor),
+    ])
 
     operationSpinner = NSProgressIndicator()
     operationSpinner.style = .spinning
@@ -3516,38 +3687,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     let hint = NSTextField(
       labelWithString: localized(
-        "Status synchronizes with Tart every 5 seconds and when the window activates. When quitting, you can stop VMs or keep them running in the background."
+        "Live status syncs every 5 seconds. TartR never restarts a VM that is already running."
       ))
     hint.textColor = .tertiaryLabelColor
     hint.font = NSFont.systemFont(ofSize: 11)
+    let syncIcon = NSImageView()
+    syncIcon.image = NSImage(
+      systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: nil)
+    syncIcon.contentTintColor = .tertiaryLabelColor
+    syncIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
+    syncIcon.widthAnchor.constraint(equalToConstant: 13).isActive = true
+    syncIcon.heightAnchor.constraint(equalToConstant: 13).isActive = true
+    let footer = NSStackView(views: [syncIcon, hint, NSView()])
+    footer.orientation = .horizontal
+    footer.alignment = .centerY
+    footer.spacing = 6
 
     let stack = NSStackView(views: [
-      headingRow, summaryLabel, installBox, quickAddBox, listBox, buttonRow, operationRow, hint,
+      headingRow, metricRow, summaryLabel, installBox, listBox, operationRow, footer,
     ])
     stack.orientation = .vertical
     stack.alignment = .leading
-    stack.spacing = 10
+    stack.spacing = 9
+    stack.setCustomSpacing(16, after: headingRow)
+    stack.setCustomSpacing(12, after: metricRow)
     stack.translatesAutoresizingMaskIntoConstraints = false
     window.contentView?.addSubview(stack)
 
     headingRow.translatesAutoresizingMaskIntoConstraints = false
+    metricRow.translatesAutoresizingMaskIntoConstraints = false
     installBox.translatesAutoresizingMaskIntoConstraints = false
-    quickAddBox.translatesAutoresizingMaskIntoConstraints = false
     listBox.translatesAutoresizingMaskIntoConstraints = false
-    buttonRow.translatesAutoresizingMaskIntoConstraints = false
     operationRow.translatesAutoresizingMaskIntoConstraints = false
+    footer.translatesAutoresizingMaskIntoConstraints = false
+    let safeArea = window.contentView!.safeAreaLayoutGuide
     NSLayoutConstraint.activate([
-      stack.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor, constant: 24),
-      stack.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor, constant: -24),
-      stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 22),
-      stack.bottomAnchor.constraint(equalTo: window.contentView!.bottomAnchor, constant: -18),
+      stack.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor, constant: 26),
+      stack.trailingAnchor.constraint(equalTo: safeArea.trailingAnchor, constant: -26),
+      stack.topAnchor.constraint(equalTo: safeArea.topAnchor, constant: 18),
+      stack.bottomAnchor.constraint(equalTo: safeArea.bottomAnchor, constant: -16),
       headingRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+      metricRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
       installBox.widthAnchor.constraint(equalTo: stack.widthAnchor),
-      quickAddBox.widthAnchor.constraint(equalTo: stack.widthAnchor),
       listBox.widthAnchor.constraint(equalTo: stack.widthAnchor),
-      listBox.heightAnchor.constraint(greaterThanOrEqualToConstant: 220),
-      buttonRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+      listBox.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
       operationRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+      footer.widthAnchor.constraint(equalTo: stack.widthAnchor),
     ])
   }
 

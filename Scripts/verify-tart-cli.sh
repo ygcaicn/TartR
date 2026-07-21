@@ -43,7 +43,8 @@ require_help push
 require_help import
 require_help export
 require_help prune --entries --older-than --space-budget
-require_help set --cpu --memory --display --disk-size
+require_help set --cpu --memory --display --display-refit --no-display-refit --random-mac \
+  --random-serial --disk --disk-size
 require_help create --from-ipsw --linux --disk-size
 
 print "Compatible Tart CLI: $("$TART_BIN" --version)"

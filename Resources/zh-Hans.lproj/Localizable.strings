@@ -157,8 +157,6 @@
 "Current Name" = "当前名称";
 "Renaming…" = "正在重命名…";
 
-"Configure %@" = "调整 %@";
-"Fill in only the fields you want to change. Disks can only grow, not shrink." = "只填写需要修改的项目。磁盘只能扩容，不能缩小。";
 "CPU Cores" = "CPU 核数";
 "Memory (MB)" = "内存（MB）";
 "Display Resolution" = "显示分辨率";
@@ -381,3 +379,30 @@
 "%@ (TART_HOME environment)" = "%@（TART_HOME 环境变量）";
 "Tart default directory" = "Tart 默认目录";
 "Restore Environment/Default Tart Home" = "恢复环境变量/默认 Tart 主目录";
+
+"Virtual Machines" = "虚拟机";
+"Hardware & Identity · %@" = "硬件与身份 · %@";
+"Modify the stopped VM using tart set." = "使用 tart set 修改已停止的虚拟机。";
+"Unchanged" = "保持不变";
+"e.g. 1920x1080px" = "例如 1920x1080px";
+"Grow only" = "只能扩容";
+"Display Refit" = "显示自动适配";
+"Keep Current" = "保持当前设置";
+"Enable" = "启用";
+"Disable" = "禁用";
+"Replacement Disk" = "替换磁盘";
+"No replacement selected" = "未选择替换磁盘";
+"Choose…" = "选择…";
+"Identity Options" = "身份选项";
+"Generate a new random MAC address" = "生成新的随机 MAC 地址";
+"Generate a new random macOS serial number" = "生成新的随机 macOS 序列号";
+"Leave fields unchanged unless needed. Replacing disk contents is destructive; disk size can only increase." = "如无需要请保持字段不变。替换磁盘内容是破坏性操作；磁盘容量只能增加。";
+"Apply Changes" = "应用更改";
+"Invalid replacement disk" = "替换磁盘无效";
+"The selected disk image no longer exists or is not a file." = "所选磁盘镜像已不存在或不是文件。";
+"Replace %@ disk contents?" = "替换 %@ 的磁盘内容？";
+"This overwrites the VM disk with %@ and cannot be undone. The VM must remain stopped." = "这会使用 %@ 覆盖虚拟机磁盘且无法撤销。虚拟机必须保持停止状态。";
+"Replace Disk Contents" = "替换磁盘内容";
+"Choose Replacement Disk" = "选择替换磁盘";
+"Choose a disk image whose contents will replace the VM's current disk. No shell command is used." = "选择一个磁盘镜像，其内容将替换虚拟机当前磁盘。此操作不会使用 shell 命令。";
+"Choose Disk" = "选择磁盘";

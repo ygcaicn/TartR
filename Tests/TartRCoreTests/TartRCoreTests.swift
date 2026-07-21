@@ -316,6 +316,29 @@ final class TartRCoreTests: XCTestCase {
     XCTAssertEqual(
       TartCommand.pruneCaches(olderThan: "30", spaceBudget: "100").arguments,
       ["prune", "--entries", "caches", "--older-than", "30", "--space-budget", "100"])
+    XCTAssertEqual(
+      TartCommand.set(
+        name: "vm name", cpu: "6", memory: "12288", display: "1920x1080px",
+        displayRefit: false, randomMAC: true, randomSerial: true,
+        diskPath: "/Volumes/images/replacement.raw", diskSize: "180"
+      ).arguments,
+      [
+        "set", "vm name", "--cpu", "6", "--memory", "12288", "--display",
+        "1920x1080px", "--no-display-refit", "--random-mac", "--random-serial", "--disk",
+        "/Volumes/images/replacement.raw", "--disk-size", "180",
+      ])
+    XCTAssertEqual(
+      TartCommand.set(
+        name: "vm", cpu: nil, memory: nil, display: nil, displayRefit: true,
+        randomMAC: false, randomSerial: false, diskPath: nil, diskSize: nil
+      ).arguments,
+      ["set", "vm", "--display-refit"])
+    XCTAssertEqual(
+      TartCommand.set(
+        name: "vm", cpu: nil, memory: nil, display: nil, displayRefit: nil,
+        randomMAC: false, randomSerial: false, diskPath: nil, diskSize: nil
+      ).arguments,
+      ["set", "vm"])
   }
 
   func testExecutableLocatorPrefersExplicitOverride() {

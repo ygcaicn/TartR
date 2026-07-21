@@ -16,7 +16,17 @@ public enum TartCommand: Equatable, Sendable {
   case exportArchive(name: String, path: String)
   case importArchive(path: String, name: String)
   case pruneCaches(olderThan: String?, spaceBudget: String?)
-  case set(name: String, cpu: String?, memory: String?, display: String?, diskSize: String?)
+  case set(
+    name: String,
+    cpu: String?,
+    memory: String?,
+    display: String?,
+    displayRefit: Bool?,
+    randomMAC: Bool,
+    randomSerial: Bool,
+    diskPath: String?,
+    diskSize: String?
+  )
   case createMac(name: String, diskSize: String)
   case createLinux(name: String, diskSize: String)
 
@@ -61,14 +71,18 @@ public enum TartCommand: Equatable, Sendable {
       if let olderThan, !olderThan.isEmpty { result += ["--older-than", olderThan] }
       if let spaceBudget, !spaceBudget.isEmpty { result += ["--space-budget", spaceBudget] }
       return result
-    case .set(let name, let cpu, let memory, let display, let diskSize):
+    case .set(
+      let name, let cpu, let memory, let display, let displayRefit, let randomMAC,
+      let randomSerial, let diskPath, let diskSize):
       var result = ["set", name]
-      for (option, value) in [
-        ("--cpu", cpu), ("--memory", memory),
-        ("--display", display), ("--disk-size", diskSize),
-      ] {
+      for (option, value) in [("--cpu", cpu), ("--memory", memory), ("--display", display)] {
         if let value, !value.isEmpty { result += [option, value] }
       }
+      if let displayRefit { result.append(displayRefit ? "--display-refit" : "--no-display-refit") }
+      if randomMAC { result.append("--random-mac") }
+      if randomSerial { result.append("--random-serial") }
+      if let diskPath, !diskPath.isEmpty { result += ["--disk", diskPath] }
+      if let diskSize, !diskSize.isEmpty { result += ["--disk-size", diskSize] }
       return result
     case .createMac(let name, let diskSize):
       return ["create", "--from-ipsw", "latest", "--disk-size", diskSize, name]

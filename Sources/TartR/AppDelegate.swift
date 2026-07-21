@@ -319,12 +319,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   private var imageButton: NSButton!
   private var moreButton: NSButton!
   private var summaryLabel: NSTextField!
+  private var tartHomeLabel: NSTextField!
   private var installBox: NSBox!
   private var operationLabel: NSTextField!
   private var operationSpinner: NSProgressIndicator!
   private var cancelOperationButton: NSButton!
   private var catalogTargetField: NSTextField?
   private var catalogSourceField: NSTextField?
+  private var pendingReplacementDiskField: NSTextField?
   private var launchAtLoginMenuItem: NSMenuItem?
   private var automaticUpdateMenuItem: NSMenuItem?
 
@@ -562,24 +564,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     switch identifier.rawValue {
     case "name":
-      let cell = reusableTextCell(identifier: identifier)
-      cell.textField?.stringValue = configuration.name
-      cell.textField?.font = NSFont.systemFont(ofSize: 13, weight: .medium)
-      cell.textField?.textColor = .labelColor
-      return cell
+      return iconTextCell(
+        identifier: identifier, text: configuration.name, symbolName: "desktopcomputer")
     case "status":
-      let cell = reusableTextCell(identifier: identifier)
       let state = states[configuration.id] ?? .unknown
-      cell.textField?.stringValue = state.label
-      cell.textField?.font = NSFont.systemFont(ofSize: 12)
-      switch state {
-      case .running: cell.textField?.textColor = .systemGreen
-      case .failed: cell.textField?.textColor = .systemRed
-      case .starting, .stopping, .unknown: cell.textField?.textColor = .systemOrange
-      case .stopped, .suspended: cell.textField?.textColor = .secondaryLabelColor
-      case .missing: cell.textField?.textColor = .tertiaryLabelColor
-      }
-      return cell
+      return statusCell(identifier: identifier, state: state)
     case "disk":
       let cell = reusableTextCell(identifier: identifier)
       cell.textField?.stringValue = infoByName[configuration.name]?.disk.map { "\($0) GB" } ?? "—"
@@ -595,18 +584,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     case "autostart":
       let cell = NSTableCellView()
       cell.identifier = identifier
-      let checkbox = NSButton(
-        checkboxWithTitle: "", target: self, action: #selector(toggleAutoStart(_:)))
-      checkbox.state = configuration.autoStart ? .on : .off
-      checkbox.tag = row
-      checkbox.setAccessibilityLabel(
+      let toggle = NSSwitch()
+      toggle.target = self
+      toggle.action = #selector(toggleAutoStart(_:))
+      toggle.state = configuration.autoStart ? .on : .off
+      toggle.controlSize = .small
+      toggle.tag = row
+      toggle.setAccessibilityLabel(
         localized("Start %@ automatically when TartR opens", configuration.name))
-      checkbox.setAccessibilityValue(configuration.autoStart)
-      checkbox.translatesAutoresizingMaskIntoConstraints = false
-      cell.addSubview(checkbox)
+      toggle.setAccessibilityValue(configuration.autoStart)
+      toggle.translatesAutoresizingMaskIntoConstraints = false
+      cell.addSubview(toggle)
       NSLayoutConstraint.activate([
-        checkbox.centerXAnchor.constraint(equalTo: cell.centerXAnchor),
-        checkbox.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        toggle.centerXAnchor.constraint(equalTo: cell.centerXAnchor),
+        toggle.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
       ])
       return cell
     default:
@@ -721,7 +712,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     }
   }
 
-  @objc private func toggleAutoStart(_ sender: NSButton) {
+  @objc private func toggleAutoStart(_ sender: NSSwitch) {
     let visible = visibleConfigurations
     guard visible.indices.contains(sender.tag),
       let index = configurations.firstIndex(where: { $0.id == visible[sender.tag].id })
@@ -1460,17 +1451,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   @objc private func configureSelectedVM() {
     guard let configuration = selectedConfiguration else { return }
-    guard
-      let values = promptForValues(
-        title: localized("Configure %@", configuration.name),
-        message: localized(
-          "Fill in only the fields you want to change. Disks can only grow, not shrink."),
-        fields: [
-          (localized("CPU Cores"), "", true), (localized("Memory (MB)"), "", true),
-          (localized("Display Resolution"), "", true), (localized("Disk Size (GB)"), "", true),
-        ]
-      )
-    else { return }
+    let cpuField = configurationField(placeholder: localized("Unchanged"))
+    let memoryField = configurationField(placeholder: localized("Unchanged"))
+    let displayField = configurationField(placeholder: localized("e.g. 1920x1080px"))
+    let diskSizeField = configurationField(placeholder: localized("Grow only"))
+    let displayRefit = NSPopUpButton(frame: .zero, pullsDown: false)
+    displayRefit.addItems(withTitles: [
+      localized("Keep Current"), localized("Enable"), localized("Disable"),
+    ])
+
+    let diskPathField = configurationField(placeholder: localized("No replacement selected"))
+    diskPathField.isEditable = false
+    diskPathField.isSelectable = true
+    let chooseDiskButton = NSButton(
+      title: localized("Choose…"), target: self, action: #selector(chooseReplacementDisk))
+    chooseDiskButton.bezelStyle = .rounded
+    let diskRow = NSStackView(views: [diskPathField, chooseDiskButton])
+    diskRow.orientation = .horizontal
+    diskRow.spacing = 8
+
+    let form = labeledForm(
+      [
+        (localized("CPU Cores"), cpuField),
+        (localized("Memory (MB)"), memoryField),
+        (localized("Display Resolution"), displayField),
+        (localized("Display Refit"), displayRefit),
+        (localized("Disk Size (GB)"), diskSizeField),
+        (localized("Replacement Disk"), diskRow),
+      ], width: 520)
+
+    let randomMAC = NSButton(
+      checkboxWithTitle: localized("Generate a new random MAC address"), target: nil, action: nil)
+    let randomSerial = NSButton(
+      checkboxWithTitle: localized("Generate a new random macOS serial number"), target: nil,
+      action: nil)
+    let identityOptions = NSStackView(views: [randomMAC, randomSerial])
+    identityOptions.orientation = .vertical
+    identityOptions.alignment = .leading
+    identityOptions.spacing = 7
+
+    let sectionTitle = NSTextField(labelWithString: localized("Identity Options"))
+    sectionTitle.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+    let warning = NSTextField(
+      wrappingLabelWithString: localized(
+        "Leave fields unchanged unless needed. Replacing disk contents is destructive; disk size can only increase."
+      ))
+    warning.textColor = .secondaryLabelColor
+    warning.font = NSFont.systemFont(ofSize: 11)
+
+    let accessory = NSStackView(views: [form, sectionTitle, identityOptions, warning])
+    accessory.orientation = .vertical
+    accessory.alignment = .leading
+    accessory.spacing = 10
+    accessory.frame = NSRect(x: 0, y: 0, width: 520, height: 290)
+    pendingReplacementDiskField = diskPathField
+    defer { pendingReplacementDiskField = nil }
+
+    let alert = NSAlert()
+    alert.messageText = localized("Hardware & Identity · %@", configuration.name)
+    alert.informativeText = localized("Modify the stopped VM using tart set.")
+    alert.accessoryView = accessory
+    alert.addButton(withTitle: localized("Apply Changes"))
+    alert.addButton(withTitle: localized("Cancel"))
+    guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+    let values = [cpuField, memoryField, displayField, diskSizeField].map {
+      $0.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     switch VMResourceValidation.validate(
       cpu: values[0], memory: values[1], display: values[2], diskSize: values[3])
@@ -1499,11 +1546,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       return
     }
 
+    let diskPath = diskPathField.stringValue.isEmpty ? nil : diskPathField.stringValue
+    if let diskPath {
+      var isDirectory: ObjCBool = false
+      guard FileManager.default.fileExists(atPath: diskPath, isDirectory: &isDirectory),
+        !isDirectory.boolValue
+      else {
+        showAlert(
+          title: localized("Invalid replacement disk"),
+          message: localized("The selected disk image no longer exists or is not a file."))
+        return
+      }
+      let confirmation = NSAlert()
+      confirmation.alertStyle = .critical
+      confirmation.messageText = localized("Replace %@ disk contents?", configuration.name)
+      confirmation.informativeText = localized(
+        "This overwrites the VM disk with %@ and cannot be undone. The VM must remain stopped.",
+        URL(fileURLWithPath: diskPath).lastPathComponent)
+      confirmation.addButton(withTitle: localized("Replace Disk Contents"))
+      confirmation.addButton(withTitle: localized("Cancel"))
+      guard confirmation.runModal() == .alertFirstButtonReturn else { return }
+    }
+
     let arguments = TartCommand.set(
       name: configuration.name,
       cpu: values[0].isEmpty ? nil : values[0],
       memory: values[1].isEmpty ? nil : values[1],
       display: values[2].isEmpty ? nil : values[2],
+      displayRefit: displayRefit.indexOfSelectedItem == 0
+        ? nil : displayRefit.indexOfSelectedItem == 1,
+      randomMAC: randomMAC.state == .on,
+      randomSerial: randomSerial.state == .on,
+      diskPath: diskPath,
       diskSize: values[3].isEmpty ? nil : values[3]
     ).arguments
     guard arguments.count > 2 else { return }
@@ -1511,6 +1585,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       [weak self] success, _ in
       if success { self?.syncTartState() }
     }
+  }
+
+  private func configurationField(placeholder: String) -> NSTextField {
+    let field = NSTextField()
+    field.placeholderString = placeholder
+    field.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+    return field
+  }
+
+  @objc private func chooseReplacementDisk() {
+    let panel = NSOpenPanel()
+    panel.title = localized("Choose Replacement Disk")
+    panel.message = localized(
+      "Choose a disk image whose contents will replace the VM's current disk. No shell command is used."
+    )
+    panel.prompt = localized("Choose Disk")
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = false
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    pendingReplacementDiskField?.stringValue = url.standardizedFileURL.path
   }
 
   @objc private func configureSelectedVMRunOptions() {
@@ -2928,6 +3023,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   private func refreshUI(forceTableReload: Bool = false) {
+    tartHomeLabel?.stringValue = tartHomeDescription
+    tartHomeLabel?.toolTip = tartHomeDescription
     let visible = visibleConfigurations
     let selectedIDs = Set(selectedConfigurations.map(\.id))
     let signature = visible.map { configuration in
@@ -3084,29 +3181,137 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     return cell
   }
 
-  private func makeButton(_ title: String, action: Selector) -> NSButton {
+  private func iconTextCell(
+    identifier: NSUserInterfaceItemIdentifier, text: String, symbolName: String
+  ) -> NSTableCellView {
+    let cell = NSTableCellView()
+    cell.identifier = identifier
+    let icon = NSImageView()
+    icon.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
+    icon.contentTintColor = .controlAccentColor
+    icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
+    icon.translatesAutoresizingMaskIntoConstraints = false
+    let label = NSTextField(labelWithString: text)
+    label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+    label.lineBreakMode = .byTruncatingTail
+    label.translatesAutoresizingMaskIntoConstraints = false
+    cell.textField = label
+    cell.addSubview(icon)
+    cell.addSubview(label)
+    NSLayoutConstraint.activate([
+      icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
+      icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+      icon.widthAnchor.constraint(equalToConstant: 18),
+      icon.heightAnchor.constraint(equalToConstant: 18),
+      label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
+      label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
+      label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+    ])
+    return cell
+  }
+
+  private func statusCell(identifier: NSUserInterfaceItemIdentifier, state: VMState)
+    -> NSTableCellView
+  {
+    let cell = NSTableCellView()
+    cell.identifier = identifier
+    let dot = NSView()
+    dot.wantsLayer = true
+    dot.layer?.backgroundColor = statusColor(for: state).cgColor
+    dot.layer?.cornerRadius = 4
+    dot.translatesAutoresizingMaskIntoConstraints = false
+    let label = NSTextField(labelWithString: state.label)
+    label.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+    label.textColor = statusColor(for: state)
+    label.translatesAutoresizingMaskIntoConstraints = false
+    cell.textField = label
+    cell.addSubview(dot)
+    cell.addSubview(label)
+    NSLayoutConstraint.activate([
+      dot.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
+      dot.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+      dot.widthAnchor.constraint(equalToConstant: 8),
+      dot.heightAnchor.constraint(equalToConstant: 8),
+      label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 7),
+      label.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -8),
+      label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+    ])
+    return cell
+  }
+
+  private func statusColor(for state: VMState) -> NSColor {
+    switch state {
+    case .running: return .systemGreen
+    case .failed: return .systemRed
+    case .starting, .stopping, .unknown: return .systemOrange
+    case .suspended: return .systemBlue
+    case .stopped: return .secondaryLabelColor
+    case .missing: return .tertiaryLabelColor
+    }
+  }
+
+  private func makeButton(
+    _ title: String, action: Selector, symbolName: String? = nil, prominent: Bool = false
+  ) -> NSButton {
     let button = NSButton(title: title, target: self, action: action)
     button.bezelStyle = .rounded
     button.controlSize = .large
+    if let symbolName {
+      button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
+      button.imagePosition = .imageLeading
+    }
+    if prominent {
+      button.bezelColor = .controlAccentColor
+      button.contentTintColor = .white
+    }
     return button
   }
 
   private func buildWindow() {
     window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 850, height: 560),
-      styleMask: [.titled, .closable, .miniaturizable, .resizable],
+      contentRect: NSRect(x: 0, y: 0, width: 980, height: 650),
+      styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
       backing: .buffered,
       defer: false
     )
     window.title = appTitle
+    window.titleVisibility = .hidden
+    window.titlebarAppearsTransparent = true
+    window.toolbarStyle = .unified
     window.center()
     window.setFrameAutosaveName("TartRMainWindow")
-    window.minSize = NSSize(width: 720, height: 480)
+    window.minSize = NSSize(width: 820, height: 560)
     window.isReleasedWhenClosed = false
     window.delegate = self
 
-    let heading = NSTextField(labelWithString: "TartR")
-    heading.font = NSFont.systemFont(ofSize: 22, weight: .semibold)
+    let background = NSVisualEffectView()
+    background.material = .underWindowBackground
+    background.blendingMode = .behindWindow
+    background.state = .active
+    window.contentView = background
+
+    let appIcon = NSImageView()
+    appIcon.image = NSImage(
+      systemSymbolName: "shippingbox.fill", accessibilityDescription: appTitle)
+    appIcon.contentTintColor = .controlAccentColor
+    appIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 27, weight: .semibold)
+    appIcon.widthAnchor.constraint(equalToConstant: 40).isActive = true
+    appIcon.heightAnchor.constraint(equalToConstant: 40).isActive = true
+
+    let heading = NSTextField(labelWithString: localized("Virtual Machines"))
+    heading.font = NSFont.systemFont(ofSize: 25, weight: .bold)
+    tartHomeLabel = NSTextField(labelWithString: tartHomeDescription)
+    tartHomeLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+    tartHomeLabel.textColor = .secondaryLabelColor
+    tartHomeLabel.lineBreakMode = .byTruncatingMiddle
+    let headingLabels = NSStackView(views: [heading, tartHomeLabel])
+    headingLabels.orientation = .vertical
+    headingLabels.alignment = .leading
+    headingLabels.spacing = 2
+    let brandRow = NSStackView(views: [appIcon, headingLabels])
+    brandRow.orientation = .horizontal
+    brandRow.alignment = .centerY
+    brandRow.spacing = 10
 
     searchField = NSSearchField()
     searchField.placeholderString = localized("Search VMs")
@@ -3115,19 +3320,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     searchField.target = self
     searchField.action = #selector(searchChanged)
     searchField.widthAnchor.constraint(equalToConstant: 220).isActive = true
-    imageButton = makeButton(localized("Download/Clone Image…"), action: #selector(downloadImage))
-    let headingRow = NSStackView(views: [heading, NSView(), searchField, imageButton])
+    imageButton = makeButton(
+      localized("Download/Clone Image…"), action: #selector(downloadImage),
+      symbolName: "plus.circle.fill", prominent: true)
+    let headingRow = NSStackView(views: [brandRow, NSView(), searchField, imageButton])
     headingRow.orientation = .horizontal
-    headingRow.spacing = 10
+    headingRow.alignment = .centerY
+    headingRow.spacing = 12
 
     summaryLabel = NSTextField(labelWithString: "")
     summaryLabel.textColor = .secondaryLabelColor
-    summaryLabel.font = NSFont.systemFont(ofSize: 12)
+    summaryLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
 
     installBox = NSBox()
     installBox.boxType = .custom
     installBox.titlePosition = .noTitle
-    installBox.cornerRadius = 8
+    installBox.cornerRadius = 12
     installBox.fillColor = NSColor.systemYellow.withAlphaComponent(0.10)
     installBox.borderColor = NSColor.systemYellow.withAlphaComponent(0.45)
     installBox.borderWidth = 1
@@ -3170,7 +3378,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     nameField.delegate = self
     nameField.font = NSFont.systemFont(ofSize: 13)
 
-    addButton = makeButton(localized("Add"), action: #selector(addVM))
+    addButton = makeButton(localized("Add"), action: #selector(addVM), symbolName: "plus")
     addButton.isEnabled = false
     addButton.widthAnchor.constraint(equalToConstant: 88).isActive = true
 
@@ -3178,11 +3386,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     inputRow.orientation = .horizontal
     inputRow.spacing = 10
 
+    let quickAddBox = NSBox()
+    quickAddBox.boxType = .custom
+    quickAddBox.titlePosition = .noTitle
+    quickAddBox.cornerRadius = 10
+    quickAddBox.fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.72)
+    quickAddBox.borderColor = NSColor.separatorColor.withAlphaComponent(0.55)
+    quickAddBox.borderWidth = 1
+    inputRow.translatesAutoresizingMaskIntoConstraints = false
+    quickAddBox.contentView?.addSubview(inputRow)
+    NSLayoutConstraint.activate([
+      inputRow.leadingAnchor.constraint(
+        equalTo: quickAddBox.contentView!.leadingAnchor, constant: 12),
+      inputRow.trailingAnchor.constraint(
+        equalTo: quickAddBox.contentView!.trailingAnchor, constant: -12),
+      inputRow.topAnchor.constraint(equalTo: quickAddBox.contentView!.topAnchor, constant: 9),
+      inputRow.bottomAnchor.constraint(
+        equalTo: quickAddBox.contentView!.bottomAnchor, constant: -9),
+    ])
+
     tableView = NSTableView()
     tableView.delegate = self
     tableView.dataSource = self
-    tableView.rowHeight = 36
-    tableView.usesAlternatingRowBackgroundColors = true
+    tableView.rowHeight = 46
+    tableView.intercellSpacing = NSSize(width: 0, height: 2)
+    tableView.usesAlternatingRowBackgroundColors = false
+    tableView.backgroundColor = .clear
     tableView.allowsEmptySelection = true
     tableView.allowsMultipleSelection = true
     tableView.setAccessibilityLabel(localized("Tart VM List"))
@@ -3226,13 +3455,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     scrollView.documentView = tableView
     scrollView.hasVerticalScroller = true
     scrollView.hasHorizontalScroller = false
-    scrollView.borderType = .bezelBorder
+    scrollView.borderType = .noBorder
+    scrollView.drawsBackground = false
 
-    startButton = makeButton(localized("Run"), action: #selector(startSelectedVM))
-    stopButton = makeButton(localized("Stop"), action: #selector(stopSelectedVM))
-    logButton = makeButton(localized("Open Log"), action: #selector(openSelectedLog))
-    moreButton = makeButton(localized("More Actions…"), action: #selector(showMoreMenu(_:)))
-    deleteButton = makeButton(localized("Remove Record"), action: #selector(deleteSelectedVM))
+    let listBox = NSBox()
+    listBox.boxType = .custom
+    listBox.titlePosition = .noTitle
+    listBox.cornerRadius = 12
+    listBox.fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.86)
+    listBox.borderColor = NSColor.separatorColor.withAlphaComponent(0.65)
+    listBox.borderWidth = 1
+    scrollView.translatesAutoresizingMaskIntoConstraints = false
+    listBox.contentView?.addSubview(scrollView)
+    NSLayoutConstraint.activate([
+      scrollView.leadingAnchor.constraint(equalTo: listBox.contentView!.leadingAnchor, constant: 1),
+      scrollView.trailingAnchor.constraint(
+        equalTo: listBox.contentView!.trailingAnchor, constant: -1),
+      scrollView.topAnchor.constraint(equalTo: listBox.contentView!.topAnchor, constant: 1),
+      scrollView.bottomAnchor.constraint(equalTo: listBox.contentView!.bottomAnchor, constant: -1),
+    ])
+
+    startButton = makeButton(
+      localized("Run"), action: #selector(startSelectedVM), symbolName: "play.fill",
+      prominent: true)
+    stopButton = makeButton(
+      localized("Stop"), action: #selector(stopSelectedVM), symbolName: "stop.fill")
+    logButton = makeButton(
+      localized("Open Log"), action: #selector(openSelectedLog), symbolName: "doc.text")
+    moreButton = makeButton(
+      localized("More Actions…"), action: #selector(showMoreMenu(_:)),
+      symbolName: "ellipsis.circle")
+    deleteButton = makeButton(
+      localized("Remove Record"), action: #selector(deleteSelectedVM), symbolName: "trash")
     deleteButton.contentTintColor = .systemRed
 
     let buttonRow = NSStackView(views: [
@@ -3268,7 +3522,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     hint.font = NSFont.systemFont(ofSize: 11)
 
     let stack = NSStackView(views: [
-      headingRow, summaryLabel, installBox, inputRow, scrollView, buttonRow, operationRow, hint,
+      headingRow, summaryLabel, installBox, quickAddBox, listBox, buttonRow, operationRow, hint,
     ])
     stack.orientation = .vertical
     stack.alignment = .leading
@@ -3276,10 +3530,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     stack.translatesAutoresizingMaskIntoConstraints = false
     window.contentView?.addSubview(stack)
 
-    inputRow.translatesAutoresizingMaskIntoConstraints = false
     headingRow.translatesAutoresizingMaskIntoConstraints = false
     installBox.translatesAutoresizingMaskIntoConstraints = false
-    scrollView.translatesAutoresizingMaskIntoConstraints = false
+    quickAddBox.translatesAutoresizingMaskIntoConstraints = false
+    listBox.translatesAutoresizingMaskIntoConstraints = false
     buttonRow.translatesAutoresizingMaskIntoConstraints = false
     operationRow.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
@@ -3289,9 +3543,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       stack.bottomAnchor.constraint(equalTo: window.contentView!.bottomAnchor, constant: -18),
       headingRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
       installBox.widthAnchor.constraint(equalTo: stack.widthAnchor),
-      inputRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-      scrollView.widthAnchor.constraint(equalTo: stack.widthAnchor),
-      scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 190),
+      quickAddBox.widthAnchor.constraint(equalTo: stack.widthAnchor),
+      listBox.widthAnchor.constraint(equalTo: stack.widthAnchor),
+      listBox.heightAnchor.constraint(greaterThanOrEqualToConstant: 220),
       buttonRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
       operationRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
     ])
